@@ -1,0 +1,372 @@
+---
+# site.yml — Install and configure CVMFS + Lmod on Ubuntu
+# Usage:
+#   ansible-playbook site.yml -i <HOST>,
+#   ansible-playbook site.yml --check -i <HOST>,   (dry-run)
+- name: Configure CVMFS and Lmod
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    supported_ubuntu_versions:
+      - "22.04"
+      - "24.04"
+      - "26.04"
+    supported_debian_versions:
+      - "11"
+      - "12"
+      - "13"
+    # Apptainer GitHub release pin (used on Debian; Ubuntu uses the PPA).
+    # The `-trixie+` variant pins against Debian-13-or-newer libc/libfuse.
+    apptainer_version: "1.5.0"
+    apptainer_deb_variant: >-
+      {{ '-trixie+'
+         if (ansible_distribution == 'Debian'
+             and ansible_distribution_major_version | int >= 13)
+         else '' }}
+    apptainer_deb_base: https://github.com/apptainer/apptainer/releases/download
+    apptainer_deb_url: >-
+      {{ apptainer_deb_base }}/v{{ apptainer_version }}/apptainer_{{ apptainer_version }}{{ apptainer_deb_variant }}_amd64.deb
+
+  tasks:
+    # ---------------------------------------------------------------
+    # 0. Supported-target guard
+    # ---------------------------------------------------------------
+    # Fail fast on unsupported hosts so misuse surfaces here rather than
+    # deep inside an apt task with a confusing error.
+    - name: Assert target is a supported Ubuntu or Debian release
+      ansible.builtin.assert:
+        that:
+          - (ansible_distribution == 'Ubuntu' and ansible_distribution_version in supported_ubuntu_versions)
+            or (ansible_distribution == 'Debian' and ansible_distribution_major_version in supported_debian_versions)
+        fail_msg: >-
+          Unsupported target: {{ ansible_distribution }} {{ ansible_distribution_version }}.
+          Supported: Ubuntu {{ supported_ubuntu_versions | join(', ') }};
+          Debian {{ supported_debian_versions | join(', ') }}.
+        success_msg: "Target {{ ansible_distribution }} {{ ansible_distribution_version }} is supported."
+
+    - name: Gather installed package facts
+      ansible.builtin.package_facts:
+        manager: auto
+
+    # ---------------------------------------------------------------
+    # 1. Prerequisites
+    # ---------------------------------------------------------------
+    - name: Install prerequisite packages
+      ansible.builtin.apt:
+        name: "{{ prereq_packages }}"
+        state: present
+        update_cache: true
+      vars:
+        # software-properties-common is the PPA dependency, only used on Ubuntu.
+        prereq_packages: >-
+          {{
+            ['fuse', 'autofs', 'wget', 'lsb-release']
+            + (['software-properties-common'] if ansible_distribution == 'Ubuntu' else [])
+          }}
+
+    - name: Ensure FUSE kernel module is loaded
+      community.general.modprobe:
+        name: fuse
+        state: present
+
+    # ---------------------------------------------------------------
+    # 2. CVMFS Client
+    # ---------------------------------------------------------------
+    - name: Download CVMFS release package
+      # cvmrepo.s3.cern.ch hosts a fresher cvmfs-release than the
+      # ecsft.cern.ch/dist/ tree.
+      ansible.builtin.get_url:
+        url: https://cvmrepo.s3.cern.ch/cvmrepo/apt/cvmfs-release-latest_all.deb
+        dest: /tmp/cvmfs-release-latest_all.deb
+        mode: "0644"
+      when:
+        - not ansible_check_mode
+        - ansible_facts.packages['cvmfs-release'] is not defined
+
+    - name: Install CVMFS release package
+      ansible.builtin.apt:
+        deb: /tmp/cvmfs-release-latest_all.deb
+      register: _cvmfs_release_install
+      when:
+        - not ansible_check_mode
+        - ansible_facts.packages['cvmfs-release'] is not defined
+
+    # The cvmfs-release postinst has no 26.04 snippet yet and falls back
+    # to the debian12/jammy build, whose libssl/libfuse pins refuse to
+    # install on 26.04. Symlink to the questing (25.10) snippet, which
+    # is the closest released codename and resolves on 26.04. Debian
+    # releases pick their own native snippet (bullseye/bookworm/trixie)
+    # and need no override. Remove this task when upstream cvmfs-release
+    # ships a native 26.04 snippet under /usr/share/cvmfs-release/.
+    - name: Force CVMFS apt source to questing on Ubuntu 26.04
+      ansible.builtin.file:
+        src: /usr/share/cvmfs-release/cernvm.list.questing
+        dest: /etc/apt/sources.list.d/cernvm.list
+        state: link
+        force: true
+      register: _cvmfs_release_codename_override
+      when:
+        - not ansible_check_mode
+        - ansible_distribution == 'Ubuntu'
+        - ansible_distribution_version == '26.04'
+
+    - name: Update apt cache after adding CVMFS repo
+      ansible.builtin.apt:
+        update_cache: true
+      when:
+        - not ansible_check_mode
+        - (_cvmfs_release_install is defined and _cvmfs_release_install is changed)
+          or (_cvmfs_release_codename_override is defined and _cvmfs_release_codename_override is changed)
+
+    - name: Install cvmfs package
+      ansible.builtin.apt:
+        name: cvmfs
+        state: present
+      when: not ansible_check_mode
+
+    - name: Run cvmfs_config setup (configure autofs)
+      ansible.builtin.command: cvmfs_config setup
+      args:
+        creates: /etc/auto.master.d/cvmfs.autofs
+      when: not ansible_check_mode
+
+    - name: Remove CVMFS release deb
+      ansible.builtin.file:
+        path: /tmp/cvmfs-release-latest_all.deb
+        state: absent
+      when: not ansible_check_mode
+
+    # ---------------------------------------------------------------
+    # 3. CVMFS Configuration
+    # ---------------------------------------------------------------
+    - name: Deploy /etc/cvmfs/default.local
+      ansible.builtin.template:
+        src: default.local.j2
+        dest: /etc/cvmfs/default.local
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart autofs
+
+    - name: Create Neurodesk key directory
+      ansible.builtin.file:
+        path: /etc/cvmfs/keys/ardc.edu.au
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Deploy Neurodesk public key
+      ansible.builtin.template:
+        src: neurodesk.key.j2
+        dest: /etc/cvmfs/keys/ardc.edu.au/neurodesk.ardc.edu.au.pub
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart autofs
+
+    - name: Create config.d directory
+      ansible.builtin.file:
+        path: /etc/cvmfs/config.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Deploy Neurodesk repository config
+      ansible.builtin.template:
+        src: neurodesk.conf.j2
+        dest: /etc/cvmfs/config.d/neurodesk.ardc.edu.au.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart autofs
+
+    # ---------------------------------------------------------------
+    # 4. Lmod
+    # ---------------------------------------------------------------
+    - name: Install Lmod
+      ansible.builtin.apt:
+        name: lmod
+        state: present
+      when: not ansible_check_mode
+
+    # /usr/share/lmod/lmod is a packaging-guaranteed symlink to the installed
+    # versioned Lmod directory on the Ubuntu and Debian lmod debs, so we stat
+    # through it instead of scanning the filesystem. Using the symlink lets
+    # module.sh.j2 hard-code the path and survive Lmod version bumps with no
+    # playbook change.
+    - name: Verify Lmod bash init script exists
+      ansible.builtin.stat:
+        path: /usr/share/lmod/lmod/init/bash
+      register: _lmod_init
+      failed_when: not _lmod_init.stat.exists
+      when: not ansible_check_mode
+
+    - name: Deploy /usr/share/module.sh
+      ansible.builtin.template:
+        src: module.sh.j2
+        dest: /usr/share/module.sh
+        owner: root
+        group: root
+        mode: "0644"
+      when: not ansible_check_mode
+
+    - name: Verify Lmod profile.d symlink exists
+      ansible.builtin.stat:
+        path: /etc/profile.d/lmod.sh
+      register: _lmod_profile
+      failed_when: not _lmod_profile.stat.exists
+      when: not ansible_check_mode
+
+    # ---------------------------------------------------------------
+    # 5. Apptainer (required by Neurodesk container workflows)
+    # ---------------------------------------------------------------
+    # Two install paths:
+    #   - Ubuntu: PPA via deb822_repository + signed-by keyring fetched
+    #     over HTTPS. `apt_repository: ppa:...` is avoided because its
+    #     hkp-based key import is unreliable on newer Ubuntu.
+    #   - Debian: upstream GitHub release deb (the PPA is Launchpad-only
+    #     and has no Debian pocket).
+    - name: Install Apptainer from PPA (Ubuntu)
+      when: ansible_distribution == 'Ubuntu'
+      block:
+        - name: Ensure /etc/apt/keyrings exists
+          ansible.builtin.file:
+            path: /etc/apt/keyrings
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Fetch Apptainer PPA signing key
+          ansible.builtin.get_url:
+            url: https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xF6B0F5193D4F3301EF491FF0AFE36534FC6218AE
+            dest: /etc/apt/keyrings/apptainer.asc
+            owner: root
+            group: root
+            mode: "0644"
+          when: not ansible_check_mode
+
+        - name: Add Apptainer PPA
+          ansible.builtin.deb822_repository:
+            name: apptainer
+            types: deb
+            uris: https://ppa.launchpadcontent.net/apptainer/ppa/ubuntu
+            suites: "{{ ansible_distribution_release }}"
+            components: main
+            signed_by: /etc/apt/keyrings/apptainer.asc
+            state: present
+          register: _apptainer_repo
+          when: not ansible_check_mode
+
+        - name: Update apt cache after adding Apptainer PPA
+          ansible.builtin.apt:
+            update_cache: true
+          when:
+            - not ansible_check_mode
+            - _apptainer_repo is defined and _apptainer_repo is changed
+
+        - name: Install Apptainer (Ubuntu)
+          ansible.builtin.apt:
+            name: apptainer
+            state: present
+          when: not ansible_check_mode
+
+    - name: Install Apptainer from GitHub release (Debian)
+      when: ansible_distribution == 'Debian'
+      block:
+        - name: Download Apptainer .deb
+          ansible.builtin.get_url:
+            url: "{{ apptainer_deb_url }}"
+            dest: /tmp/apptainer.deb
+            mode: "0644"
+          when:
+            - not ansible_check_mode
+            - ansible_facts.packages['apptainer'] is not defined
+
+        - name: Install Apptainer .deb
+          ansible.builtin.apt:
+            deb: /tmp/apptainer.deb
+          when:
+            - not ansible_check_mode
+            - ansible_facts.packages['apptainer'] is not defined
+
+        - name: Remove Apptainer .deb
+          ansible.builtin.file:
+            path: /tmp/apptainer.deb
+            state: absent
+          when: not ansible_check_mode
+
+    # ---------------------------------------------------------------
+    # 6. Module Integration
+    # ---------------------------------------------------------------
+    # The dest is named `zz-cvmfs-modules.sh` so /etc/profile.d sources it
+    # AFTER lmod.sh. See the comment at the top of the template for the
+    # Ubuntu 22.04 reason.
+    - name: Deploy /etc/profile.d/zz-cvmfs-modules.sh
+      ansible.builtin.template:
+        src: cvmfs_modules.sh.j2
+        dest: /etc/profile.d/zz-cvmfs-modules.sh
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Remove old /etc/profile.d/cvmfs_modules.sh (pre-rename installs)
+      ansible.builtin.file:
+        path: /etc/profile.d/cvmfs_modules.sh
+        state: absent
+
+    - name: Add module system init to /etc/bash.bashrc
+      ansible.builtin.blockinfile:
+        path: /etc/bash.bashrc
+        marker: "# {mark} ANSIBLE MANAGED - CVMFS modules"
+        block: |
+          if [ -f '/usr/share/module.sh' ]; then
+              . /usr/share/module.sh
+          fi
+          if [ -f '/etc/profile.d/zz-cvmfs-modules.sh' ]; then
+              . /etc/profile.d/zz-cvmfs-modules.sh
+          fi
+
+    # ---------------------------------------------------------------
+    # 7. Verification
+    # ---------------------------------------------------------------
+    - name: Flush handlers (restart autofs if needed)
+      ansible.builtin.meta: flush_handlers
+      when: not ansible_check_mode
+
+    - name: Verify CVMFS configuration (chksetup)
+      ansible.builtin.command: cvmfs_config chksetup
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Verify CVMFS connectivity — {{ item }}
+      ansible.builtin.command: cvmfs_config probe {{ item }}
+      register: _cvmfs_probe
+      changed_when: false
+      retries: 6
+      delay: 10
+      until: _cvmfs_probe is succeeded
+      loop: "{{ cvmfs_repositories }}"
+      when: not ansible_check_mode
+
+    - name: Verify CVMFS mount /cvmfs/{{ item }}
+      ansible.builtin.command: ls /cvmfs/{{ item }}
+      changed_when: false
+      loop: "{{ cvmfs_repositories }}"
+      when: not ansible_check_mode
+
+    - name: Verify Apptainer is installed and runnable
+      ansible.builtin.command: apptainer --version
+      changed_when: false
+      when: not ansible_check_mode
+
+  handlers:
+    - name: Restart autofs
+      ansible.builtin.systemd:
+        name: autofs
+        state: restarted
+      when: not ansible_check_mode

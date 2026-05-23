@@ -1,0 +1,5 @@
+# /etc/cvmfs/default.local — Ansible managed
+CVMFS_REPOSITORIES={{ cvmfs_repositories | join(',') }}
+CVMFS_CLIENT_PROFILE={{ cvmfs_client_profile }}
+CVMFS_HTTP_PROXY={{ cvmfs_http_proxy }}
+CVMFS_QUOTA_LIMIT={{ cvmfs_quota_limit }}

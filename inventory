@@ -1,0 +1,5 @@
+# Optional static inventory. Single-host usage typically passes -i <host>,
+# (with trailing comma) on the command line instead of editing this file.
+#
+# Example:
+#   ansible-playbook site.yml -i 192.168.122.100,

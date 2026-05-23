@@ -1,0 +1,68 @@
+#!/bin/bash
+# /etc/profile.d/zz-cvmfs-modules.sh — Ansible managed
+#
+# Exposes Alliance and Neurodesk module trees via MODULEPATH so that
+# `module avail` lists them. Nothing CVMFS-side is activated until the user
+# explicitly `module load`s something — login PATH/env stay untouched.
+#
+# Do NOT source Alliance's /cvmfs/soft.computecanada.ca/config/profile/bash.sh
+# here: it prepends /cvmfs/.../gentoo/.../usr/bin to PATH, which shadows
+# system tools like /usr/bin/lesspipe and breaks the default ~/.bashrc.
+#
+# The filename starts with `zz-` so /etc/profile.d sources this script
+# AFTER lmod.sh. On Ubuntu 22.04 (lmod 6.6), lmod.sh unconditionally resets
+# MODULEPATH from /etc/lmod/modulespath when MODULEPATH_ROOT is unset, which
+# wipes any earlier value. Setting MODULEPATH here, after lmod.sh has run,
+# survives intact across all supported Ubuntu releases.
+
+# Guard against double-sourcing
+if [ -n "$_CVMFS_MODULES_SOURCED" ]; then
+    return 0 2>/dev/null || exit 0
+fi
+_CVMFS_MODULES_SOURCED=1
+
+{% if (ansible_distribution == "Ubuntu" and ansible_distribution_version == "22.04")
+   or (ansible_distribution == "Debian" and ansible_distribution_major_version == "11") %}
+# Ubuntu 22.04 and Debian 11 both ship Lmod 6.6 (2016). Its spider-cache
+# writer mis-escapes some metadata in the Alliance/Neurodesk modulefiles,
+# producing a syntactically invalid moduleT.x86_64_Linux.lua. The first
+# `module avail` succeeds (and writes the broken cache); every subsequent
+# invocation reads it and crashes with "'}' expected (to close '{' …)
+# near '['". Disabling cache reads keeps `module avail` correct at the
+# cost of a per-call rescan — only on those two releases. Newer Lmod
+# (Ubuntu 24.04+, Debian 12+) escapes correctly and uses the cache.
+export LMOD_IGNORE_CACHE=yes
+{% endif %}
+
+# --- Alliance CAN (soft.computecanada.ca) ---
+# /cvmfs/soft.computecanada.ca/custom/modules is Alliance's clean Lmod entry
+# point. After it is on MODULEPATH, `module avail` shows StdEnv/2023 etc.;
+# `module load StdEnv/2023` then activates the full Alliance environment.
+#
+# LMOD_PACKAGE_PATH points Lmod at Alliance's SitePackage.lua, which defines
+# the helper Lua functions (e.g. get_highest_supported_architecture) that
+# Alliance modulefiles call. It's a config pointer only — nothing runs from
+# CVMFS until the user explicitly invokes `module`.
+if [ -d /cvmfs/soft.computecanada.ca/custom/modules ]; then
+    MODULEPATH="/cvmfs/soft.computecanada.ca/custom/modules${MODULEPATH:+:$MODULEPATH}"
+    export LMOD_PACKAGE_PATH=/cvmfs/soft.computecanada.ca/config/lmod/
+    export LMOD_RC=/cvmfs/soft.computecanada.ca/config/lmod/lmodrc.lua
+    # Alliance's SitePackage_logging.lua needs CC_CLUSTER; outside of an
+    # Alliance cluster the canonical fallback is "computecanada".
+    : "${CC_CLUSTER:=computecanada}"
+    export CC_CLUSTER
+fi
+
+# --- Neurodesk (neurodesk.ardc.edu.au) ---
+# Neurodesk publishes one modulefile tree per application under
+# neurodesk-modules/, so each subdirectory needs its own MODULEPATH entry.
+if [ -d /cvmfs/neurodesk.ardc.edu.au/neurodesk-modules ]; then
+    for _nd_dir in /cvmfs/neurodesk.ardc.edu.au/neurodesk-modules/*/; do
+        [ -d "$_nd_dir" ] || continue
+        _nd_dir="${_nd_dir%/}"
+        MODULEPATH="${_nd_dir}${MODULEPATH:+:$MODULEPATH}"
+    done
+    unset _nd_dir
+fi
+
+export MODULEPATH

@@ -1,0 +1,4 @@
+CVMFS_USE_GEOAPI={{ 'yes' if neurodesk_use_geoapi else 'no' }}
+CVMFS_SERVER_URL="{{ neurodesk_server_url | replace('\n', '') | replace(' ', '') }}"
+CVMFS_KEYS_DIR="/etc/cvmfs/keys/ardc.edu.au/"
+CVMFS_HTTP_PROXY={{ cvmfs_http_proxy }}
