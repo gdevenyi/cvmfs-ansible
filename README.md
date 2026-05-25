@@ -60,6 +60,7 @@ Key target files created or managed:
     ├── lib.sh                # shared logging, SSH, version resolver, diagnostics
     ├── create-vm.sh          # create libvirt VM for testing
     ├── test-vm.sh            # verify the deployment over SSH
+    ├── test-single.sh        # single-target create/apply/verify/teardown orchestrator
     ├── test-all.sh           # sequential create/apply/verify/teardown for every supported target
     └── teardown-vm.sh        # destroy VM and clean up
 ```
@@ -356,6 +357,19 @@ This removes:
 
 ### Run all supported targets in a row
 
+### Single-target end-to-end
+
+`tests/test-single.sh` runs the full create → apply → verify → teardown
+lifecycle for one target.
+
+```bash
+./tests/test-single.sh                    # ubuntu:26.04 (default)
+TARGET=debian:12 ./tests/test-single.sh   # a specific target
+KEEP_ON_FAILURE=1 ./tests/test-single.sh  # leave VM up on failure
+```
+
+### All supported targets in a row
+
 `tests/test-all.sh` walks every supported target sequentially, running
 create → apply → verify → teardown for each, and prints a final pass/fail
 summary.
@@ -368,6 +382,7 @@ Useful knobs:
 
 - `TARGETS="ubuntu:22.04 debian:13"` — restrict the target list
 - `KEEP_ON_FAILURE=1` — leave a broken VM running for inspection
+- `SKIP_TEARDOWN=1` — leave all VMs running (even on success)
 - `CONTINUE_ON_ERROR=1` — don't stop on the first failed target
 
 The orchestrator uses the target table in `tests/lib.sh` (also the source
@@ -470,6 +485,15 @@ ansible-playbook site.yml -i 10.0.0.25,
 
 ### Validate locally before touching a real host
 
+Automated single-target lifecycle:
+
+```bash
+./tests/test-single.sh
+TARGET=debian:12 ./tests/test-single.sh
+```
+
+Or step by step:
+
 ```bash
 ./tests/create-vm.sh
 ansible-playbook -i 192.168.122.26, -u ubuntu \
@@ -495,4 +519,4 @@ When changing this repository:
 - preserve the exact Neurodesk key and server chain unless intentionally updating them
 - preserve the transient-key behavior in `tests/create-vm.sh`
 - re-run the VM workflow for non-trivial changes
-- `TEST_DIAG=1` on `tests/test-vm.sh` enables a diagnostic dump via `tests/lib.sh` when a check fails
+- `TEST_DIAG=1` on `tests/test-vm.sh` (or via `test-single.sh` / `test-all.sh`) enables a diagnostic dump via `tests/lib.sh` when a check fails

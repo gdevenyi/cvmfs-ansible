@@ -39,6 +39,7 @@ This is infrastructure-as-code, not an application repo. There is no `src/`, ser
 - `tests/lib.sh` centralizes test-harness logging, SSH options, runtime state loading, the target table / resolver, and optional diagnostics
 - `tests/create-vm.sh` provisions an Ubuntu or Debian VM for validation (defaults to `ubuntu:26.04`; pick another with `TARGET=<distro:version>`)
 - `tests/test-vm.sh` verifies the deployed behavior over SSH
+- `tests/test-single.sh` runs the full create → apply → verify → teardown lifecycle for one target (defaults to `ubuntu:26.04`; select with `TARGET=<distro:version>`)
 - `tests/test-all.sh` runs create → apply → verify → teardown sequentially for every supported target
 - `tests/teardown-vm.sh` destroys the VM and removes transient state
 
@@ -95,14 +96,22 @@ ansible-playbook -i <IP>, -u <SSH_USER> --private-key "${TMPDIR:-/tmp}/cvmfs-set
 A different target: `TARGET=ubuntu:22.04 ./tests/create-vm.sh` or
 `TARGET=debian:13 ./tests/create-vm.sh`.
 
+Single target end-to-end (create → apply → verify → teardown):
+
+```bash
+./tests/test-single.sh
+TARGET=debian:12 ./tests/test-single.sh
+KEEP_ON_FAILURE=1 ./tests/test-single.sh
+```
+
 All supported targets sequentially:
 
 ```bash
 ./tests/test-all.sh
 ```
 
-Env knobs for the orchestrator: `TARGETS`, `KEEP_ON_FAILURE`,
-`CONTINUE_ON_ERROR`.
+Env knobs for the orchestrators: `TARGET`, `TARGETS`, `KEEP_ON_FAILURE`,
+`SKIP_TEARDOWN`, `CONTINUE_ON_ERROR`.
 
 ### Useful target-side checks
 
@@ -159,6 +168,7 @@ bash -lc 'module avail'
 - `tests/lib.sh` — shared test-harness logging, SSH wrappers, state loading, target table + resolver, and optional diagnostics (`TEST_DIAG=1`)
 - `tests/create-vm.sh` — local libvirt test environment creation (target-aware via `TARGET=distro:version`)
 - `tests/test-vm.sh` — remote behavior verification
+- `tests/test-single.sh` — single-target create/apply/verify/teardown orchestrator
 - `tests/test-all.sh` — sequential orchestrator across all supported targets
 - `tests/teardown-vm.sh` — cleanup
 - `ansible.cfg` — callback format, privilege escalation, inventory defaults
@@ -188,10 +198,24 @@ Important constraints:
 
 Use the VM harness for end-to-end checks:
 
+Single target, fully automated:
+
+```bash
+./tests/test-single.sh
+```
+
+Or step by step:
+
 1. `./tests/create-vm.sh`
 2. apply `site.yml` to the VM
 3. `./tests/test-vm.sh <IP> ubuntu`
 4. `./tests/teardown-vm.sh`
+
+All supported targets:
+
+```bash
+./tests/test-all.sh
+```
 
 ### What the verifier proves
 

@@ -7,6 +7,7 @@
 #   TARGETS='ubuntu:22.04 debian:13' ./tests/test-all.sh
 #   KEEP_ON_FAILURE=1 ./tests/test-all.sh        # leave the broken VM up
 #   CONTINUE_ON_ERROR=1 ./tests/test-all.sh      # don't stop at first failure
+#   SKIP_TEARDOWN=1 ./tests/test-all.sh           # leave all VMs up
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,6 +19,7 @@ source "${SCRIPT_DIR}/lib.sh"
 TARGET_LIST=(${TARGETS:-${TARGETS_ALL[*]}})
 KEEP_ON_FAILURE="${KEEP_ON_FAILURE:-0}"
 CONTINUE_ON_ERROR="${CONTINUE_ON_ERROR:-0}"
+SKIP_TEARDOWN="${SKIP_TEARDOWN:-0}"
 
 CURRENT_VM_NAME=''
 declare -a PASSED=()
@@ -26,6 +28,12 @@ declare -a FAILED=()
 cleanup_current_vm() {
     local keep="${1:-0}"
     [[ -n "$CURRENT_VM_NAME" ]] || return 0
+
+    if [[ "$SKIP_TEARDOWN" == "1" ]]; then
+        log_warn "Skipping teardown for ${CURRENT_VM_NAME} (SKIP_TEARDOWN=1)"
+        CURRENT_VM_NAME=''
+        return 0
+    fi
 
     if [[ "$keep" == "1" ]]; then
         log_warn "Skipping teardown for ${CURRENT_VM_NAME} (KEEP_ON_FAILURE=1)"
@@ -95,7 +103,7 @@ run_one_target() {
 }
 
 log_info "Multi-target test plan: ${TARGET_LIST[*]}"
-log_info "KEEP_ON_FAILURE=${KEEP_ON_FAILURE} CONTINUE_ON_ERROR=${CONTINUE_ON_ERROR}"
+log_info "KEEP_ON_FAILURE=${KEEP_ON_FAILURE} CONTINUE_ON_ERROR=${CONTINUE_ON_ERROR} SKIP_TEARDOWN=${SKIP_TEARDOWN}"
 
 for target in "${TARGET_LIST[@]}"; do
     if run_one_target "$target"; then
