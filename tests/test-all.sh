@@ -22,8 +22,17 @@ CONTINUE_ON_ERROR="${CONTINUE_ON_ERROR:-0}"
 SKIP_TEARDOWN="${SKIP_TEARDOWN:-0}"
 
 CURRENT_VM_NAME=''
+CURRENT_VM_IP=''
+CURRENT_SSH_USER=''
+CURRENT_SSH_KEY_FILE=''
 declare -a PASSED=()
 declare -a FAILED=()
+
+can_offer_ssh() {
+    [[ -n "$CURRENT_VM_NAME" && -n "$CURRENT_SSH_KEY_FILE" ]] || return 1
+    [[ -f "$CURRENT_SSH_KEY_FILE" ]] || return 1
+    virsh dominfo "$CURRENT_VM_NAME" >/dev/null 2>&1
+}
 
 cleanup_current_vm() {
     local keep="${1:-0}"
@@ -31,19 +40,36 @@ cleanup_current_vm() {
 
     if [[ "$SKIP_TEARDOWN" == "1" ]]; then
         log_warn "Skipping teardown for ${CURRENT_VM_NAME} (SKIP_TEARDOWN=1)"
+        if can_offer_ssh; then
+            log_info "SSH key preserved at ${CURRENT_SSH_KEY_FILE}"
+            print_ssh_hint "$CURRENT_VM_IP" "$CURRENT_SSH_USER" "$CURRENT_SSH_KEY_FILE"
+        fi
         CURRENT_VM_NAME=''
+        CURRENT_VM_IP=''
+        CURRENT_SSH_USER=''
+        CURRENT_SSH_KEY_FILE=''
         return 0
     fi
 
     if [[ "$keep" == "1" ]]; then
         log_warn "Skipping teardown for ${CURRENT_VM_NAME} (KEEP_ON_FAILURE=1)"
+        if can_offer_ssh; then
+            log_info "SSH key preserved at ${CURRENT_SSH_KEY_FILE}"
+            print_ssh_hint "$CURRENT_VM_IP" "$CURRENT_SSH_USER" "$CURRENT_SSH_KEY_FILE"
+        fi
         CURRENT_VM_NAME=''
+        CURRENT_VM_IP=''
+        CURRENT_SSH_USER=''
+        CURRENT_SSH_KEY_FILE=''
         return 0
     fi
 
     log_info "Tearing down ${CURRENT_VM_NAME}..."
     "${SCRIPT_DIR}/teardown-vm.sh" "$CURRENT_VM_NAME" || true
     CURRENT_VM_NAME=''
+    CURRENT_VM_IP=''
+    CURRENT_SSH_USER=''
+    CURRENT_SSH_KEY_FILE=''
 }
 
 on_exit() {
@@ -72,6 +98,9 @@ run_one_target() {
     log_info "================================================================"
 
     CURRENT_VM_NAME="$vm_name"
+    CURRENT_VM_IP="$vm_ip"
+    CURRENT_SSH_USER="$ssh_user"
+    CURRENT_SSH_KEY_FILE="$ssh_key_file"
 
     if ! TARGET="$target" "${SCRIPT_DIR}/create-vm.sh"; then
         log_error "create-vm.sh failed for ${target}"

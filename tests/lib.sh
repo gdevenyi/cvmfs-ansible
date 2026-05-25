@@ -120,6 +120,16 @@ runtime_dir_for_vm() {
     printf '%s/cvmfs-setup/%s\n' "${TMPDIR:-/tmp}" "$vm_name"
 }
 
+print_ssh_hint() {
+    local host="${1:?host required}"
+    local ssh_user="${2:?ssh user required}"
+    local ssh_key="${3:?ssh key required}"
+
+    log_info "Interactive SSH:"
+    printf '  ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \\\n'
+    printf '    -i "%s" %s@%s\n' "$ssh_key" "$ssh_user" "$host"
+}
+
 state_file_for_vm() {
     local vm_name="${1:-${VM_NAME:-$DEFAULT_VM_NAME}}"
     printf '%s/state.env\n' "$(runtime_dir_for_vm "$vm_name")"

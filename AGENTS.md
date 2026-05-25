@@ -93,6 +93,17 @@ ansible-playbook -i <IP>, -u <SSH_USER> --private-key "${TMPDIR:-/tmp}/cvmfs-set
 
 `<SSH_USER>` is `ubuntu` for Ubuntu targets and `debian` for Debian targets.
 
+Interactive SSH to a running test VM:
+
+```bash
+ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+  -i "${TMPDIR:-/tmp}/cvmfs-setup/<vm-name>/id_ed25519" <SSH_USER>@<IP>
+```
+
+When using `test-single.sh` / `test-all.sh`, preserve the VM first with
+`SKIP_TEARDOWN=1` or `KEEP_ON_FAILURE=1`. Those orchestrators preserve the
+transient SSH key and print the exact SSH command when a VM is left running.
+
 A different target: `TARGET=ubuntu:22.04 ./tests/create-vm.sh` or
 `TARGET=debian:13 ./tests/create-vm.sh`.
 
@@ -102,6 +113,7 @@ Single target end-to-end (create → apply → verify → teardown):
 ./tests/test-single.sh
 TARGET=debian:12 ./tests/test-single.sh
 KEEP_ON_FAILURE=1 ./tests/test-single.sh
+SKIP_TEARDOWN=1 ./tests/test-single.sh
 ```
 
 All supported targets sequentially:

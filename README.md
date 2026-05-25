@@ -307,6 +307,35 @@ It prints the VM IP and the transient SSH key path on success. Per-knob env
 overrides (`VM_NAME`, `VM_IP`, `VM_IMAGE_URL`, `OS_VARIANT`, `BASE_IMAGE`,
 `SSH_USER`) still take precedence over the per-target defaults.
 
+### Open an interactive SSH session
+
+After `create-vm.sh` succeeds, SSH to the guest with the transient key it
+generated:
+
+```bash
+ssh -o IdentitiesOnly=yes \
+  -o StrictHostKeyChecking=no \
+  -o UserKnownHostsFile=/dev/null \
+  -i "${TMPDIR:-/tmp}/cvmfs-setup/cvmfs-test-ubuntu-26-04/id_ed25519" \
+  ubuntu@192.168.122.26
+```
+
+For Debian targets, change the username and VM-specific path/IP, for example:
+
+```bash
+ssh -o IdentitiesOnly=yes \
+  -o StrictHostKeyChecking=no \
+  -o UserKnownHostsFile=/dev/null \
+  -i "${TMPDIR:-/tmp}/cvmfs-setup/cvmfs-test-debian-13/id_ed25519" \
+  debian@192.168.122.33
+```
+
+If you used `tests/test-single.sh` or `tests/test-all.sh`, keep the VM running
+first with `SKIP_TEARDOWN=1` or, on failure paths, `KEEP_ON_FAILURE=1`.
+Those orchestrators preserve the transient SSH key under
+`${TMPDIR:-/tmp}/cvmfs-setup/<vm-name>/` and print the exact SSH command when
+they leave a VM running.
+
 ### Apply the playbook to the VM
 
 Example (default `ubuntu:26.04` VM):
@@ -366,7 +395,12 @@ lifecycle for one target.
 ./tests/test-single.sh                    # ubuntu:26.04 (default)
 TARGET=debian:12 ./tests/test-single.sh   # a specific target
 KEEP_ON_FAILURE=1 ./tests/test-single.sh  # leave VM up on failure
+SKIP_TEARDOWN=1 ./tests/test-single.sh    # leave VM up on success
 ```
+
+When `SKIP_TEARDOWN=1` or `KEEP_ON_FAILURE=1` leaves the VM running,
+`test-single.sh` prints the preserved SSH key path and an interactive SSH
+command you can paste directly.
 
 ### All supported targets in a row
 
@@ -384,6 +418,10 @@ Useful knobs:
 - `KEEP_ON_FAILURE=1` — leave a broken VM running for inspection
 - `SKIP_TEARDOWN=1` — leave all VMs running (even on success)
 - `CONTINUE_ON_ERROR=1` — don't stop on the first failed target
+
+When `SKIP_TEARDOWN=1` or `KEEP_ON_FAILURE=1` preserves a VM, `test-all.sh`
+prints the retained SSH key path and an interactive SSH command for that VM
+before moving on.
 
 The orchestrator uses the target table in `tests/lib.sh` (also the source
 of truth for the per-target VM name / IP / cloud image URL / SSH user).
