@@ -7,8 +7,9 @@
 #
 # Defaults target ${DEFAULT_TARGET} (see tests/lib.sh). Pick a different
 # supported target with TARGET=ubuntu:22.04 / TARGET=debian:12 / etc.
-# Individual knobs (VM_NAME, VM_IP, VM_IMAGE_URL, OS_VARIANT, BASE_IMAGE,
-# SSH_USER) still override the per-target defaults.
+# Individual knobs (VM_NAME, VM_VCPUS, VM_MEMORY_MB, VM_DISK_GB, VM_IP,
+# GATEWAY, VM_IMAGE_URL, OS_VARIANT, VM_FIRMWARE, BASE_IMAGE, SSH_USER)
+# still override the per-target defaults.
 #
 # Usage:
 #   ./tests/create-vm.sh
@@ -230,7 +231,7 @@ log_info "IP:      ${VM_IP}"
 log_info "SSH key: ${SSH_KEY_FILE}"
 printf '\n'
 log_info "Next steps:"
-log_info "  ansible-playbook -i ${VM_IP}, -u ${SSH_USER} site.yml"
-log_info "  ./tests/test-vm.sh ${VM_IP} ${SSH_USER}"
+log_info "  ansible-playbook -i ${VM_IP}, -u ${SSH_USER} --private-key ${SSH_KEY_FILE} site.yml"
+log_info "  VM_NAME=${VM_NAME} ./tests/test-vm.sh ${VM_IP} ${SSH_USER}"
 printf '\n'
 printf '%s\n' "$VM_IP"

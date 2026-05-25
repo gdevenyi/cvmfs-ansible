@@ -1,5 +1,5 @@
 ---
-# site.yml — Install and configure CVMFS + Lmod on Ubuntu
+# site.yml — Install and configure CVMFS + Lmod on Ubuntu or Debian
 # Usage:
 #   ansible-playbook site.yml -i <HOST>,
 #   ansible-playbook site.yml --check -i <HOST>,   (dry-run)

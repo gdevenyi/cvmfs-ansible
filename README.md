@@ -247,6 +247,7 @@ cvmfs_config probe soft.computecanada.ca
 cvmfs_config probe neurodesk.ardc.edu.au
 ls /cvmfs/soft.computecanada.ca
 ls /cvmfs/neurodesk.ardc.edu.au
+apptainer --version
 bash -lc 'module avail'
 ```
 
@@ -295,8 +296,8 @@ Other defaults:
 
 The script:
 
-- downloads or reuses the Ubuntu cloud image at
-  `/var/lib/libvirt/images/ubuntu-<version>-base.qcow2`
+- downloads or reuses the target's base cloud image at
+  `/var/lib/libvirt/images/<distro>-<version>-base.qcow2`
 - creates a transient SSH key under `${TMPDIR:-/tmp}/cvmfs-setup/<vm>/`
 - writes shared runtime state consumed by `tests/lib.sh` and the other test scripts
 - builds a cloud-init seed ISO with static networking
@@ -304,8 +305,12 @@ The script:
 - waits for `cloud-init` to finish over SSH
 
 It prints the VM IP and the transient SSH key path on success. Per-knob env
-overrides (`VM_NAME`, `VM_IP`, `VM_IMAGE_URL`, `OS_VARIANT`, `BASE_IMAGE`,
+overrides (`VM_NAME`, `VM_VCPUS`, `VM_MEMORY_MB`, `VM_DISK_GB`, `VM_IP`,
+`GATEWAY`, `VM_IMAGE_URL`, `OS_VARIANT`, `VM_FIRMWARE`, `BASE_IMAGE`,
 `SSH_USER`) still take precedence over the per-target defaults.
+
+Special case: Debian 13 generic cloud images only boot under UEFI, so the
+harness automatically switches that target to `virt-install --boot uefi`.
 
 ### Open an interactive SSH session
 
@@ -357,9 +362,13 @@ ansible-playbook -i 192.168.122.33, -u debian \
 ### Run the verifier
 
 ```bash
-./tests/test-vm.sh 192.168.122.26 ubuntu
-./tests/test-vm.sh 192.168.122.33 debian
+VM_NAME=cvmfs-test-ubuntu-26-04 ./tests/test-vm.sh 192.168.122.26 ubuntu
+VM_NAME=cvmfs-test-debian-13 ./tests/test-vm.sh 192.168.122.33 debian
 ```
+
+`test-vm.sh` reuses the transient SSH key by loading state from
+`${TMPDIR:-/tmp}/cvmfs-setup/<vm-name>/state.env`, so manual runs need the
+matching `VM_NAME` unless you pass `SSH_KEY_FILE` explicitly.
 
 The verifier checks:
 
@@ -383,8 +392,6 @@ This removes:
 - `/var/lib/libvirt/images/<vm-name>.qcow2`
 - `/var/lib/libvirt/images/<vm-name>-cidata.iso`
 - `${TMPDIR:-/tmp}/cvmfs-setup/<vm-name>/`
-
-### Run all supported targets in a row
 
 ### Single-target end-to-end
 
@@ -537,7 +544,7 @@ Or step by step:
 ansible-playbook -i 192.168.122.26, -u ubuntu \
   --private-key "${TMPDIR:-/tmp}/cvmfs-setup/cvmfs-test-ubuntu-26-04/id_ed25519" \
   site.yml
-./tests/test-vm.sh 192.168.122.26 ubuntu
+VM_NAME=cvmfs-test-ubuntu-26-04 ./tests/test-vm.sh 192.168.122.26 ubuntu
 ./tests/teardown-vm.sh cvmfs-test-ubuntu-26-04
 ```
 

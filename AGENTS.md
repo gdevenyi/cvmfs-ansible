@@ -87,7 +87,7 @@ Single target (defaults to `ubuntu:26.04`):
 ```bash
 ./tests/create-vm.sh
 ansible-playbook -i <IP>, -u <SSH_USER> --private-key "${TMPDIR:-/tmp}/cvmfs-setup/<vm-name>/id_ed25519" site.yml
-./tests/test-vm.sh <IP> <SSH_USER>
+VM_NAME=<vm-name> ./tests/test-vm.sh <IP> <SSH_USER>
 ./tests/teardown-vm.sh <vm-name>
 ```
 
@@ -133,6 +133,7 @@ cvmfs_config probe soft.computecanada.ca
 cvmfs_config probe neurodesk.ardc.edu.au
 ls /cvmfs/soft.computecanada.ca
 ls /cvmfs/neurodesk.ardc.edu.au
+apptainer --version
 bash -lc 'module avail'
 ```
 
@@ -151,8 +152,8 @@ bash -lc 'module avail'
   - verification happens only after `meta: flush_handlers`
 - Keep `--check` safe.
   - tasks that require downloaded artifacts, installed binaries, or live probes are guarded with `when: not ansible_check_mode`
-- Dynamic discovery is preferred over hard-coding.
-  - Lmod version is derived from `/usr/share/lmod/.../init/bash`
+- Dynamic discovery is preferred over hard-coding where it materially helps.
+  - Lmod init is consumed through the packaging-provided `/usr/share/lmod/lmod` symlink so version bumps do not require playbook changes
 
 ### Shell script patterns
 
@@ -220,8 +221,8 @@ Or step by step:
 
 1. `./tests/create-vm.sh`
 2. apply `site.yml` to the VM
-3. `./tests/test-vm.sh <IP> ubuntu`
-4. `./tests/teardown-vm.sh`
+3. `VM_NAME=<vm-name> ./tests/test-vm.sh <IP> <SSH_USER>`
+4. `./tests/teardown-vm.sh <vm-name>`
 
 All supported targets:
 
