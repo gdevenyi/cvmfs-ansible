@@ -22,8 +22,8 @@
     apptainer_version: "1.5.0"
     apptainer_deb_variant: >-
       {{ '-trixie+'
-         if (ansible_distribution == 'Debian'
-             and ansible_distribution_major_version | int >= 13)
+         if (ansible_facts["distribution"] == 'Debian'
+             and ansible_facts["distribution_major_version"] | int >= 13)
          else '' }}
     apptainer_deb_base: https://github.com/apptainer/apptainer/releases/download
     apptainer_deb_url: >-
@@ -38,13 +38,13 @@
     - name: Assert target is a supported Ubuntu or Debian release
       ansible.builtin.assert:
         that:
-          - (ansible_distribution == 'Ubuntu' and ansible_distribution_version in supported_ubuntu_versions)
-            or (ansible_distribution == 'Debian' and ansible_distribution_major_version in supported_debian_versions)
+          - (ansible_facts["distribution"] == 'Ubuntu' and ansible_facts["distribution_version"] in supported_ubuntu_versions)
+            or (ansible_facts["distribution"] == 'Debian' and ansible_facts["distribution_major_version"] in supported_debian_versions)
         fail_msg: >-
-          Unsupported target: {{ ansible_distribution }} {{ ansible_distribution_version }}.
+          Unsupported target: {{ ansible_facts["distribution"] }} {{ ansible_facts["distribution_version"] }}.
           Supported: Ubuntu {{ supported_ubuntu_versions | join(', ') }};
           Debian {{ supported_debian_versions | join(', ') }}.
-        success_msg: "Target {{ ansible_distribution }} {{ ansible_distribution_version }} is supported."
+        success_msg: "Target {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }} is supported."
 
     - name: Gather installed package facts
       ansible.builtin.package_facts:
@@ -63,7 +63,7 @@
         prereq_packages: >-
           {{
             ['fuse', 'autofs', 'wget', 'lsb-release']
-            + (['software-properties-common'] if ansible_distribution == 'Ubuntu' else [])
+            + (['software-properties-common'] if ansible_facts["distribution"] == 'Ubuntu' else [])
           }}
 
     - name: Ensure FUSE kernel module is loaded
@@ -109,8 +109,8 @@
       register: _cvmfs_release_codename_override
       when:
         - not ansible_check_mode
-        - ansible_distribution == 'Ubuntu'
-        - ansible_distribution_version == '26.04'
+        - ansible_facts["distribution"] == 'Ubuntu'
+        - ansible_facts["distribution_version"] == '26.04'
 
     - name: Update apt cache after adding CVMFS repo
       ansible.builtin.apt:
@@ -231,7 +231,7 @@
     #   - Debian: upstream GitHub release deb (the PPA is Launchpad-only
     #     and has no Debian pocket).
     - name: Install Apptainer from PPA (Ubuntu)
-      when: ansible_distribution == 'Ubuntu'
+      when: ansible_facts["distribution"] == 'Ubuntu'
       block:
         - name: Ensure /etc/apt/keyrings exists
           ansible.builtin.file:
@@ -255,7 +255,7 @@
             name: apptainer
             types: deb
             uris: https://ppa.launchpadcontent.net/apptainer/ppa/ubuntu
-            suites: "{{ ansible_distribution_release }}"
+            suites: "{{ ansible_facts['distribution_release'] }}"
             components: main
             signed_by: /etc/apt/keyrings/apptainer.asc
             state: present
@@ -276,7 +276,7 @@
           when: not ansible_check_mode
 
     - name: Install Apptainer from GitHub release (Debian)
-      when: ansible_distribution == 'Debian'
+      when: ansible_facts["distribution"] == 'Debian'
       block:
         - name: Download Apptainer .deb
           ansible.builtin.get_url:

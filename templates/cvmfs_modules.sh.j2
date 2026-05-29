@@ -21,8 +21,8 @@ if [ -n "$_CVMFS_MODULES_SOURCED" ]; then
 fi
 _CVMFS_MODULES_SOURCED=1
 
-{% if (ansible_distribution == "Ubuntu" and ansible_distribution_version == "22.04")
-   or (ansible_distribution == "Debian" and ansible_distribution_major_version == "11") %}
+{% if (ansible_facts["distribution"] == "Ubuntu" and ansible_facts["distribution_version"] == "22.04")
+   or (ansible_facts["distribution"] == "Debian" and ansible_facts["distribution_major_version"] == "11") %}
 # Ubuntu 22.04 and Debian 11 both ship Lmod 6.6 (2016). Its spider-cache
 # writer mis-escapes some metadata in the Alliance/Neurodesk modulefiles,
 # producing a syntactically invalid moduleT.x86_64_Linux.lua. The first
