@@ -343,7 +343,7 @@
       changed_when: false
       when: not ansible_check_mode
 
-    - name: Verify CVMFS connectivity — {{ item }}
+    - name: Verify CVMFS connectivity
       ansible.builtin.command: cvmfs_config probe {{ item }}
       register: _cvmfs_probe
       changed_when: false
@@ -353,7 +353,7 @@
       loop: "{{ cvmfs_repositories }}"
       when: not ansible_check_mode
 
-    - name: Verify CVMFS mount /cvmfs/{{ item }}
+    - name: Verify CVMFS mounts
       ansible.builtin.command: ls /cvmfs/{{ item }}
       changed_when: false
       loop: "{{ cvmfs_repositories }}"
