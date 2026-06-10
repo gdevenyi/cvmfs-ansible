@@ -128,7 +128,7 @@
         owner: root
         group: root
         mode: "0644"
-      notify: Restart autofs
+      notify: Reload autofs
 
     - name: Create Neurodesk key directory
       ansible.builtin.file:
@@ -145,7 +145,7 @@
         owner: root
         group: root
         mode: "0644"
-      notify: Restart autofs
+      notify: Reload autofs
 
     - name: Create config.d directory
       ansible.builtin.file:
@@ -162,7 +162,7 @@
         owner: root
         group: root
         mode: "0644"
-      notify: Restart autofs
+      notify: Reload autofs
 
     # ---------------------------------------------------------------
     # 4. Lmod
@@ -314,7 +314,7 @@
     # ---------------------------------------------------------------
     # 7. Verification
     # ---------------------------------------------------------------
-    - name: Flush handlers (restart autofs if needed)
+    - name: Flush handlers (reload autofs if needed)
       ansible.builtin.meta: flush_handlers
       when: not ansible_check_mode
 
@@ -345,8 +345,8 @@
       when: not ansible_check_mode
 
   handlers:
-    - name: Restart autofs
+    - name: Reload autofs
       ansible.builtin.systemd:
         name: autofs
-        state: restarted
+        state: reloaded
       when: not ansible_check_mode
