@@ -93,32 +93,12 @@
         - not ansible_check_mode
         - ansible_facts.packages['cvmfs-release'] is not defined
 
-    # The cvmfs-release postinst has no 26.04 snippet yet and falls back
-    # to the debian12/jammy build, whose libssl/libfuse pins refuse to
-    # install on 26.04. Symlink to the questing (25.10) snippet, which
-    # is the closest released codename and resolves on 26.04. Debian
-    # releases pick their own native snippet (bullseye/bookworm/trixie)
-    # and need no override. Remove this task when upstream cvmfs-release
-    # ships a native 26.04 snippet under /usr/share/cvmfs-release/.
-    - name: Force CVMFS apt source to questing on Ubuntu 26.04
-      ansible.builtin.file:
-        src: /usr/share/cvmfs-release/cernvm.list.questing
-        dest: /etc/apt/sources.list.d/cernvm.list
-        state: link
-        force: true
-      register: _cvmfs_release_codename_override
-      when:
-        - not ansible_check_mode
-        - ansible_facts["distribution"] == 'Ubuntu'
-        - ansible_facts["distribution_version"] == '26.04'
-
     - name: Update apt cache after adding CVMFS repo
       ansible.builtin.apt:
         update_cache: true
       when:
         - not ansible_check_mode
-        - (_cvmfs_release_install is defined and _cvmfs_release_install is changed)
-          or (_cvmfs_release_codename_override is defined and _cvmfs_release_codename_override is changed)
+        - _cvmfs_release_install is defined and _cvmfs_release_install is changed
 
     - name: Install cvmfs package
       ansible.builtin.apt:
