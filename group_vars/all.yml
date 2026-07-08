@@ -8,6 +8,10 @@ cvmfs_repositories:
 cvmfs_http_proxy: "DIRECT"
 cvmfs_client_profile: "single"
 cvmfs_quota_limit: 5000  # cache size in MB
+# autofs idle-unmount timeout for /cvmfs, in seconds (the default 5m is too
+# short for slow CVMFS remounts). Set to 0 to keep repositories mounted until
+# reboot instead of auto-unmounting on idle.
+cvmfs_autofs_timeout: 86400
 
 # Neurodesk-specific settings
 neurodesk_use_geoapi: true

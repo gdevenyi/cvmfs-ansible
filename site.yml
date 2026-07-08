@@ -130,6 +130,18 @@
         mode: "0644"
       notify: Reload autofs
 
+    # cvmfs_config setup writes a bare /etc/auto.master.d/cvmfs.autofs; we
+    # re-template it to add the autofs idle-unmount timeout so CVMFS stays
+    # mounted instead of being unmounted after the 5-minute default.
+    - name: Deploy CVMFS autofs master entry (idle-unmount timeout)
+      ansible.builtin.template:
+        src: cvmfs.autofs.j2
+        dest: /etc/auto.master.d/cvmfs.autofs
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload autofs
+
     - name: Create Neurodesk key directory
       ansible.builtin.file:
         path: /etc/cvmfs/keys/ardc.edu.au
