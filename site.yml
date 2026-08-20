@@ -118,6 +118,56 @@
         state: absent
       when: not ansible_check_mode
 
+    # A cvmfs package upgrade runs cvmfs-reload.service, which hot-reloads the
+    # Fuse module of every mounted repository in place. That reload sometimes
+    # kills the cvmfs2 process instead of restoring it — seen on the
+    # 2.13.3 -> 2.14.1 upgrade, where cvmfs-config.cern.ch logged
+    # "Executable path: /usr/bin/cvmfs2 (deleted) / Failed to kill cvmfs
+    # client!" and dumped core. The autofs mountpoint outlives the corpse, so
+    # every access returns ENOTCONN and autofs will not remount it: the kernel
+    # still lists the path as mounted.
+    #
+    # When the casualty is the config repository, the repositories that draw
+    # their keys and CVMFS_SERVER_URL from it lose that configuration, and
+    # chksetup fails with "no public keys in /etc/cvmfs/keys" and "required
+    # parameter CVMFS_SERVER_URL undefined for soft.computecanada.ca" — even
+    # though the repository itself is still mounted and readable.
+    #
+    # Unmounting the dead endpoint is the entire repair. This sits right after
+    # the package tasks so it also cleans up after an upgrade that happened
+    # outside this playbook (a fleet-wide dist-upgrade, unattended-upgrades).
+    - name: Find stale CVMFS mounts (dead Fuse endpoints)
+      ansible.builtin.shell: |
+        set -o pipefail
+        awk '$1 == "cvmfs2" && $2 ~ "^/cvmfs/" { print $2 }' /proc/mounts |
+          while read -r mountpoint; do
+              # A dead endpoint fails stat with ENOTCONN. The timeout covers
+              # the other failure shape, a mount that hangs instead of erroring.
+              timeout 10 stat "$mountpoint" >/dev/null 2>&1 || echo "$mountpoint"
+          done
+      args:
+        executable: /bin/bash
+      register: _cvmfs_stale_mounts
+      changed_when: false
+      when: not ansible_check_mode
+
+    # --lazy rather than a plain umount: a dead endpoint has nothing left to
+    # flush, and lazy detaches it even when a user process still holds a
+    # reference, which a plain umount would refuse with EBUSY.
+    - name: Unmount stale CVMFS mounts
+      ansible.builtin.command: umount --lazy {{ item }}
+      # The loop only ever contains mountpoints the previous task found dead,
+      # so reaching this task at all means something was repaired.
+      changed_when: true
+      loop: "{{ _cvmfs_stale_mounts.stdout_lines | default([]) }}"
+      when: not ansible_check_mode
+
+    - name: Remount repaired CVMFS mounts through autofs
+      ansible.builtin.command: ls {{ item }}
+      changed_when: false
+      loop: "{{ _cvmfs_stale_mounts.stdout_lines | default([]) }}"
+      when: not ansible_check_mode
+
     # ---------------------------------------------------------------
     # 3. CVMFS Configuration
     # ---------------------------------------------------------------

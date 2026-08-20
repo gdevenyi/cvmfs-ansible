@@ -18,7 +18,9 @@ This repository is intentionally small: the main deliverable is `site.yml`, supp
 On a supported Ubuntu or Debian host, the playbook:
 
 1. installs prerequisite packages (`fuse`, `autofs`, `wget`, `lsb-release`; plus `software-properties-common` on Ubuntu)
-2. installs the CVMFS release package and `cvmfs`
+2. installs the CVMFS release package and `cvmfs`, then repairs any repository
+   left as a dead Fuse endpoint by an earlier package upgrade (see
+   [Troubleshooting](#chksetup-reports-no-public-keys-or-an-undefined-cvmfs_server_url))
 3. configures CVMFS to use:
    - `soft.computecanada.ca`
    - `neurodesk.ardc.edu.au`
@@ -472,6 +474,37 @@ In practice:
 - callback output is YAML-formatted for readability
 
 ## Troubleshooting
+
+### `chksetup` reports "no public keys" or an undefined `CVMFS_SERVER_URL`
+
+```
+Error: no public keys in /etc/cvmfs/keys
+Error: required parameter CVMFS_SERVER_URL undefined for soft.computecanada.ca
+```
+
+Both keys and `CVMFS_SERVER_URL` for `soft.computecanada.ca` come from the CVMFS
+config repository (`cvmfs-config.cern.ch`, mounted on demand under `/cvmfs`), so
+these two errors together almost always mean that mount is dead rather than that
+anything under `/etc/cvmfs` is wrong. Confirm it:
+
+```bash
+ls /cvmfs/cvmfs-config.cern.ch   # "Transport endpoint is not connected" => dead
+```
+
+A `cvmfs` package upgrade is the usual cause: it runs `cvmfs-reload.service`,
+which hot-reloads each mounted repository's Fuse module in place, and that reload
+can kill the `cvmfs2` process instead of restoring it. The autofs mountpoint
+outlives the process, so autofs will not remount it. Note that the repositories
+mounted at the time keep working from their in-memory configuration, which is why
+`ls /cvmfs/soft.computecanada.ca` can succeed while `chksetup` fails.
+
+Re-running the playbook repairs this. To fix it by hand:
+
+```bash
+sudo umount --lazy /cvmfs/cvmfs-config.cern.ch
+ls /cvmfs/cvmfs-config.cern.ch   # autofs mounts a fresh instance
+sudo cvmfs_config chksetup
+```
 
 ### `--check` looks incomplete
 

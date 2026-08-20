@@ -24,7 +24,8 @@ This is infrastructure-as-code, not an application repo. There is no `src/`, ser
 `site.yml` is the entry point. It applies changes in this order:
 
 1. install OS prerequisites (`fuse`, `autofs`, `wget`, `lsb-release`; plus `software-properties-common` on Ubuntu)
-2. install CVMFS release package and `cvmfs`
+2. install CVMFS release package and `cvmfs`, then unmount any repository left
+   as a dead Fuse endpoint by an earlier package upgrade so autofs remounts it
 3. write CVMFS config files from Jinja templates
 4. install Lmod
 5. install Apptainer (needed by Neurodesk containers) — PPA on Ubuntu, upstream GitHub `.deb` on Debian
