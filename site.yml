@@ -59,10 +59,14 @@
         state: present
         update_cache: true
       vars:
+        # fuse3, not fuse: the cvmfs package on every supported target depends
+        # on cvmfs-fuse3/libfuse3, and fuse3 Provides/Replaces fuse. Asking
+        # for fuse (2.x) would evict a preinstalled fuse3 (Ubuntu cloud
+        # images) or fail outright where other packages need fuse3.
         # software-properties-common is the PPA dependency, only used on Ubuntu.
         prereq_packages: >-
           {{
-            ['fuse', 'autofs', 'wget', 'lsb-release']
+            ['fuse3', 'autofs', 'wget', 'lsb-release']
             + (['software-properties-common'] if ansible_facts["distribution"] == 'Ubuntu' else [])
           }}
 

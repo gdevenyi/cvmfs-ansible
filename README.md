@@ -17,7 +17,7 @@ This repository is intentionally small: the main deliverable is `site.yml`, supp
 
 On a supported Ubuntu or Debian host, the playbook:
 
-1. installs prerequisite packages (`fuse`, `autofs`, `wget`, `lsb-release`; plus `software-properties-common` on Ubuntu)
+1. installs prerequisite packages (`fuse3`, `autofs`, `wget`, `lsb-release`; plus `software-properties-common` on Ubuntu)
 2. installs the CVMFS release package and `cvmfs`, then repairs any repository
    left as a dead Fuse endpoint by an earlier package upgrade (see
    [Troubleshooting](#chksetup-reports-no-public-keys-or-an-undefined-cvmfs_server_url))
