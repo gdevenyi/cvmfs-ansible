@@ -212,6 +212,11 @@ diag_dump_vm() {
 
         printf '\n--- module avail ---\n'
         ssh_host "$host" "bash -lc 'module avail 2>&1 || true'"
+
+        printf '\n--- lmod config / spider cache ---\n'
+        ssh_host "$host" "bash -lc 'module --config 2>&1 || true'"
+        ssh_host "$host" "ls -l /var/cache/lmod 2>&1 || true"
+        ssh_host "$host" "sudo systemctl status lmod-spider-cache.timer --no-pager -l || true"
     } >> "$log" 2>&1
 
     log_warn "Wrote diagnostics to ${log}"

@@ -1,0 +1,18 @@
+-- /etc/lmod/lmodrc.lua — Ansible managed
+--
+-- Points Lmod at the system-wide spider cache that
+-- /usr/local/sbin/update-lmod-spider-cache builds from the CVMFS module
+-- trees. Without an entry here Lmod never looks in the cache directory and
+-- walks CVMFS on every `module avail`.
+--
+-- Lmod reads several lmodrc files and *appends* every scDescriptT entry it
+-- finds, so this file coexists with Alliance's: $LMOD_RC points at
+-- /cvmfs/soft.computecanada.ca/config/lmod/lmodrc.lua (module properties
+-- only), and Alliance's gentoo modulefile appends its own architecture-
+-- specific cache to $LMOD_RC when StdEnv is loaded.
+scDescriptT = {
+   {
+      ["dir"]       = "{{ lmod_spider_cache_dir }}",
+      ["timestamp"] = "{{ lmod_spider_cache_timestamp }}",
+   },
+}

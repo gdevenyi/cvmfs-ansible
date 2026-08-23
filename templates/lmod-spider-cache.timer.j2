@@ -1,0 +1,14 @@
+# /etc/systemd/system/lmod-spider-cache.timer — Ansible managed
+[Unit]
+Description=Refresh the Lmod spider cache for the CVMFS module trees
+
+[Timer]
+OnCalendar={{ lmod_spider_cache_refresh }}
+# Spread refreshes across a fleet so they do not hit the CVMFS stratum-1s
+# in lockstep.
+RandomizedDelaySec={{ lmod_spider_cache_refresh_jitter }}
+# Catch up after downtime instead of waiting for the next slot.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

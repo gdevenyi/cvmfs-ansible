@@ -1,0 +1,15 @@
+# /etc/systemd/system/lmod-spider-cache.service — Ansible managed
+[Unit]
+Description=Rebuild the Lmod spider cache for the CVMFS module trees
+Documentation=https://lmod.readthedocs.io/en/latest/130_spider_cache.html
+# The spider reads /cvmfs, which autofs mounts on demand over the network.
+Wants=network-online.target
+After=network-online.target autofs.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/update-lmod-spider-cache
+# A refresh walks every modulefile in both repositories; keep it out of the
+# way of interactive work.
+Nice=10
+IOSchedulingClass=idle

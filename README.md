@@ -32,6 +32,9 @@ On a supported Ubuntu or Debian host, the playbook:
    - `cvmfs_config probe` for both repositories
    - both `/cvmfs/...` mount points are readable
    - `apptainer --version` succeeds
+8. builds a system-wide Lmod spider cache over both module trees and installs
+   an hourly systemd timer that refreshes it (see
+   [Spider cache](#spider-cache))
 
 Key target files created or managed:
 
@@ -41,6 +44,10 @@ Key target files created or managed:
 - `/usr/share/module.sh`
 - `/etc/profile.d/zz-cvmfs-modules.sh` (named to sort after `lmod.sh`)
 - `/etc/bash.bashrc` (managed block)
+- `/etc/lmod/lmodrc.lua` (points Lmod at the spider cache)
+- `/usr/local/sbin/update-lmod-spider-cache`
+- `/etc/systemd/system/lmod-spider-cache.{service,timer}`
+- `/var/cache/lmod/` (the cache itself)
 
 ## Repository Layout
 
@@ -57,7 +64,11 @@ Key target files created or managed:
 │   ├── neurodesk.conf.j2
 │   ├── neurodesk.key.j2
 │   ├── module.sh.j2
-│   └── cvmfs_modules.sh.j2
+│   ├── cvmfs_modules.sh.j2
+│   ├── lmodrc.lua.j2
+│   ├── update-lmod-spider-cache.j2
+│   ├── lmod-spider-cache.service.j2
+│   └── lmod-spider-cache.timer.j2
 └── tests/
     ├── lib.sh                # shared logging, SSH, version resolver, diagnostics
     ├── create-vm.sh          # create libvirt VM for testing
@@ -142,6 +153,15 @@ cvmfs_repositories:
 - `cvmfs_quota_limit` — cache size in MB, defaults to `5000`
 - `neurodesk_use_geoapi` — enable Neurodesk geoproximity selection
 - `neurodesk_server_url` — semicolon-separated Neurodesk mirror chain
+- `lmod_spider_cache_enabled` — build and refresh the Lmod spider cache, defaults to `true`
+- `lmod_spider_cache_dir` — where the cache lives, defaults to `/var/cache/lmod`
+- `lmod_spider_cache_timestamp` — cache timestamp file, defaults to `/var/cache/lmod/system.txt`
+- `lmod_spider_cache_refresh` — systemd `OnCalendar` expression, defaults to `hourly`
+- `lmod_spider_cache_refresh_jitter` — `RandomizedDelaySec` in seconds, defaults to `600`
+
+Setting `lmod_spider_cache_enabled: false` is a full undo: the next apply
+stops and disables the timer and removes the cache, the refresh script,
+the units, and `/etc/lmod/lmodrc.lua`.
 
 Example excerpt:
 
@@ -230,6 +250,62 @@ for _nd_dir in /cvmfs/neurodesk.ardc.edu.au/neurodesk-modules/*/; do
 done
 ```
 
+### Spider cache
+
+`module spider` walks both module trees in full — Alliance's core tree plus
+all 32 Neurodesk category directories — on every invocation, and Lmod papers
+over the cost by writing a private copy of the index into each user's
+`~/.cache/lmod`. Measured on a test VM (Ubuntu 26.04, ~1370 modulefiles):
+
+| command | no cache | system cache |
+| --- | --- | --- |
+| `module spider` (cold CVMFS) | 21s, writes 9MB to `~/.cache/lmod` | 1.3s, no user cache |
+| `module spider` (warm) | 17s | 1.3s |
+| `module avail` (warm) | 0.15s | 0.15s |
+
+`module avail` only walks the `MODULEPATH` directories themselves, so it is
+fast either way; the cache is about `spider`, about not handing every user a
+private index, and about freshness — Lmod keeps a user cache for 24h, while
+the system cache is rebuilt hourly.
+
+The playbook builds one system-wide
+[spider cache](https://lmod.readthedocs.io/en/latest/130_spider_cache.html):
+
+- `/usr/local/sbin/update-lmod-spider-cache` derives `MODULEPATH` by sourcing
+  `/etc/profile.d/zz-cvmfs-modules.sh` — so the cache always covers exactly
+  the trees users see — and hands it to Lmod's own
+  `update_lmod_system_cache_files`
+- the result lands in `/var/cache/lmod/` (`spiderT.lua` plus a precompiled
+  `spiderT.luac_<luaver>`), with `/var/cache/lmod/system.txt` as the
+  timestamp file Lmod uses to decide the cache is current
+- `/etc/lmod/lmodrc.lua` points Lmod at that directory through `scDescriptT`
+- `lmod-spider-cache.timer` re-runs the refresh hourly, so modules Neurodesk
+  publishes between refreshes show up within the hour instead of waiting out
+  a 24h user cache
+
+Two behaviors worth knowing:
+
+- The cache only affects `module avail` / `module spider`. `module load`
+  still reads the real modulefile, so a stale cache can never load stale
+  content.
+- If a repository is unmounted or wedged when the timer fires, the refresh
+  bails out and leaves the previous cache in place rather than publishing an
+  empty one.
+
+Lmod merges `scDescriptT` from every `lmodrc` it reads, so this cache
+coexists with Alliance's own: `$LMOD_RC` points at
+`/cvmfs/soft.computecanada.ca/config/lmod/lmodrc.lua` (module properties),
+and Alliance's `gentoo` modulefile appends its architecture-specific
+prebuilt cache under `/cvmfs/soft.computecanada.ca/custom/lmod/cache/` when
+`StdEnv` is loaded. That is also why the local cache stays small: Alliance's
+core modulefiles deliberately skip adding the deep EasyBuild hierarchy to
+`MODULEPATH` in spider mode.
+
+Ubuntu 22.04 and Debian 11 are excluded. Their Lmod 6.6 writes a cache it
+cannot read back (see the `LMOD_IGNORE_CACHE` note in
+`templates/cvmfs_modules.sh.j2`), so the playbook builds none there — and
+removes one if a target is downgraded into that state.
+
 ### Shell startup
 
 - `/usr/share/module.sh` dispatches to the installed Lmod init script
@@ -251,6 +327,8 @@ ls /cvmfs/soft.computecanada.ca
 ls /cvmfs/neurodesk.ardc.edu.au
 apptainer --version
 bash -lc 'module avail'
+bash -lc 'module --config' | grep -A2 'Cache Directory'
+systemctl status lmod-spider-cache.timer
 ```
 
 Expected outcomes:
@@ -259,6 +337,8 @@ Expected outcomes:
 - both `probe` commands succeed
 - both mount points list contents
 - `module avail` shows Alliance modules (for example `StdEnv/2023`) and Neurodesk modules
+- `module --config` lists `/var/cache/lmod` as a cache directory, and
+  `lmod-spider-cache.timer` is active (except on Ubuntu 22.04 / Debian 11)
 
 ## Local End-to-End Testing with Libvirt
 
@@ -445,6 +525,8 @@ Important idempotence behavior:
 - `cvmfs_config setup` is guarded by `creates: /etc/auto.master.d/cvmfs.autofs`
 - templates only notify `Restart autofs` when content changes
 - verification tasks use `changed_when: false`
+- the spider cache is rebuilt only when it is missing or when the templates
+  that define its contents changed; the timer keeps it fresh afterwards
 
 A second apply on an already-configured host should ideally end with:
 
@@ -505,6 +587,39 @@ sudo umount --lazy /cvmfs/cvmfs-config.cern.ch
 ls /cvmfs/cvmfs-config.cern.ch   # autofs mounts a fresh instance
 sudo cvmfs_config chksetup
 ```
+
+### `module avail` does not show a module that exists in CVMFS
+
+The spider cache is refreshed hourly, so a module published since the last
+refresh is not listed yet. `module load <name>` still works — loads never
+read the cache. To pick it up immediately:
+
+```bash
+sudo /usr/local/sbin/update-lmod-spider-cache
+```
+
+If the listing is still wrong afterwards, compare against an uncached walk:
+
+```bash
+LMOD_IGNORE_CACHE=yes module avail
+```
+
+A difference there means the cache was built while a repository was
+unreachable. Re-run the refresh once `ls /cvmfs/<repo>` works again; the
+script refuses to overwrite a good cache with an empty one.
+
+### Verification fails on "Verify Lmod reads the system spider cache"
+
+Lmod only reports a cache directory once it has read `scDescriptT` from an
+`lmodrc` file it looks at. Check where it looks:
+
+```bash
+module --config | grep -i 'Configuration dir'
+```
+
+The playbook writes `/etc/lmod/lmodrc.lua`; if a target's Lmod uses a
+different `LMOD_CONFIG_DIR`, point `lmod_spider_cache_*` at a path it does
+read (`/etc/lmodrc.lua` is always searched).
 
 ### `--check` looks incomplete
 

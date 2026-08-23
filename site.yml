@@ -17,6 +17,15 @@
       - "11"
       - "12"
       - "13"
+    # Ubuntu 22.04 and Debian 11 ship Lmod 6.6, whose spider-cache writer
+    # mis-escapes Alliance/Neurodesk modulefile metadata and emits a cache
+    # Lmod then chokes on. Those targets read no cache (LMOD_IGNORE_CACHE,
+    # set in cvmfs_modules.sh.j2) and build none.
+    lmod_cache_writer_broken: >-
+      {{ (ansible_facts["distribution"] == 'Ubuntu'
+          and ansible_facts["distribution_version"] == '22.04')
+         or (ansible_facts["distribution"] == 'Debian'
+             and ansible_facts["distribution_major_version"] == '11') }}
     # Apptainer GitHub release pin (used on Debian; Ubuntu uses the PPA).
     # The `-trixie+` variant pins against Debian-13-or-newer libc/libfuse.
     apptainer_version: "1.5.0"
@@ -359,6 +368,7 @@
         owner: root
         group: root
         mode: "0755"
+      register: _cvmfs_modules_profile
 
     - name: Remove old /etc/profile.d/cvmfs_modules.sh (pre-rename installs)
       ansible.builtin.file:
@@ -409,6 +419,141 @@
       ansible.builtin.command: apptainer --version
       changed_when: false
       when: not ansible_check_mode
+
+    # ---------------------------------------------------------------
+    # 8. Lmod spider cache
+    # ---------------------------------------------------------------
+    # `module spider` walks both module trees in full — measured on a test VM
+    # that is ~21s cold and ~17s warm, and it leaves a 9MB private index in
+    # the calling user's ~/.cache/lmod. A system-wide spider cache brings that
+    # to ~1.3s, shares one index across users, and refreshes hourly instead of
+    # the 24h Lmod keeps a user cache. (`module avail` only walks the
+    # MODULEPATH directories themselves and is fast either way.)
+    # This sits after verification so the first build runs against
+    # repositories already known to be mounted.
+    # https://lmod.readthedocs.io/en/latest/130_spider_cache.html
+    - name: Configure the Lmod spider cache
+      # `| bool` on both: either can arrive as a string from -e / an
+      # inventory var, and Ansible rejects non-boolean conditionals.
+      when:
+        - lmod_spider_cache_enabled | bool
+        - not (lmod_cache_writer_broken | bool)
+      block:
+        - name: Create Lmod spider cache directory
+          ansible.builtin.file:
+            path: "{{ lmod_spider_cache_dir }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Create Lmod configuration directory
+          ansible.builtin.file:
+            path: /etc/lmod
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Deploy Lmod spider cache files
+          ansible.builtin.template:
+            src: "{{ item.src }}"
+            dest: "{{ item.dest }}"
+            owner: root
+            group: root
+            mode: "{{ item.mode }}"
+          loop:
+            - src: lmodrc.lua.j2
+              dest: /etc/lmod/lmodrc.lua
+              mode: "0644"
+            - src: update-lmod-spider-cache.j2
+              dest: /usr/local/sbin/update-lmod-spider-cache
+              mode: "0755"
+            - src: lmod-spider-cache.service.j2
+              dest: /etc/systemd/system/lmod-spider-cache.service
+              mode: "0644"
+            - src: lmod-spider-cache.timer.j2
+              dest: /etc/systemd/system/lmod-spider-cache.timer
+              mode: "0644"
+          register: _lmod_cache_files
+
+        - name: Enable the Lmod spider cache refresh timer
+          ansible.builtin.systemd:
+            name: lmod-spider-cache.timer
+            daemon_reload: true
+            enabled: true
+            state: started
+          when: not ansible_check_mode
+
+        - name: Check whether the Lmod spider cache has been built
+          ansible.builtin.stat:
+            path: "{{ lmod_spider_cache_dir }}/spiderT.lua"
+          register: _lmod_spider_cache
+
+        # The cache is a build artifact, not a config file: rebuild it when it
+        # is missing or when something that defines its contents changed,
+        # rather than on every run. The timer keeps it fresh from then on.
+        - name: Build the Lmod spider cache
+          ansible.builtin.command: /usr/local/sbin/update-lmod-spider-cache
+          changed_when: true
+          when:
+            - not ansible_check_mode
+            - not _lmod_spider_cache.stat.exists
+              or _lmod_cache_files is changed
+              or _cvmfs_modules_profile is changed
+
+        # Proves the cache is wired up, not merely present: Lmod only reports
+        # a cache directory when it actually read scDescriptT from an lmodrc
+        # it looks at.
+        - name: Verify Lmod reads the system spider cache
+          ansible.builtin.shell: |
+            set -o pipefail
+            . /usr/share/lmod/lmod/init/bash
+            module --config 2>&1 | grep -q '{{ lmod_spider_cache_dir }}'
+          args:
+            executable: /bin/bash
+          changed_when: false
+          when: not ansible_check_mode
+
+    # Turning the feature off — or landing on a target whose Lmod cannot use
+    # a cache — has to undo it. Otherwise an hourly timer keeps refreshing a
+    # cache nothing reads, or Lmod keeps serving listings from one nothing
+    # refreshes.
+    - name: Remove the Lmod spider cache
+      when: not (lmod_spider_cache_enabled | bool) or (lmod_cache_writer_broken | bool)
+      block:
+        - name: Check for the Lmod spider cache timer unit
+          ansible.builtin.stat:
+            path: /etc/systemd/system/lmod-spider-cache.timer
+          register: _lmod_cache_timer_unit
+
+        - name: Disable the Lmod spider cache refresh timer
+          ansible.builtin.systemd:
+            name: lmod-spider-cache.timer
+            enabled: false
+            state: stopped
+          when:
+            - not ansible_check_mode
+            - _lmod_cache_timer_unit.stat.exists
+
+        - name: Remove Lmod spider cache files
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /etc/lmod/lmodrc.lua
+            - /usr/local/sbin/update-lmod-spider-cache
+            - /etc/systemd/system/lmod-spider-cache.timer
+            - /etc/systemd/system/lmod-spider-cache.service
+            - "{{ lmod_spider_cache_dir }}"
+          register: _lmod_cache_removed
+
+        - name: Reload systemd after removing the spider cache units
+          ansible.builtin.systemd:
+            daemon_reload: true
+          when:
+            - not ansible_check_mode
+            - _lmod_cache_removed is changed
 
   handlers:
     - name: Reload autofs

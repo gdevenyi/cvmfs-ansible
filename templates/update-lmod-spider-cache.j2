@@ -1,0 +1,54 @@
+#!/bin/bash
+# /usr/local/sbin/update-lmod-spider-cache — Ansible managed
+#
+# Rebuilds the system-wide Lmod spider cache covering the CVMFS module trees.
+# Without it `module spider` walks both trees over CVMFS on every call, and
+# each user ends up with a private copy of the same index under
+# ~/.cache/lmod.
+#
+# Run by lmod-spider-cache.timer, and once at provisioning time.
+# https://lmod.readthedocs.io/en/latest/130_spider_cache.html
+set -euo pipefail
+
+CACHE_DIR='{{ lmod_spider_cache_dir }}'
+TIMESTAMP_FILE='{{ lmod_spider_cache_timestamp }}'
+
+# LMOD_DIR — where update_lmod_system_cache_files lives — comes from Lmod's
+# own init script, through the packaging-provided /usr/share/lmod/lmod
+# symlink, so a packaged Lmod version bump needs no change here.
+# shellcheck disable=SC1091
+. /usr/share/lmod/lmod/init/bash
+
+# The cache must describe exactly the trees users see, so derive MODULEPATH
+# from the same profile script that sets it for login shells instead of
+# keeping a second copy of that logic here. Lmod's init has just seeded
+# MODULEPATH with the system modulefile directories; clear it first so the
+# cache covers the CVMFS trees and nothing else. Clearing the sourced-guard
+# rather than unsetting it keeps `set -u` happy inside the profile script.
+MODULEPATH=''
+_CVMFS_MODULES_SOURCED=''
+# shellcheck disable=SC1091
+. /etc/profile.d/zz-cvmfs-modules.sh
+cvmfs_modulepath="${MODULEPATH:-}"
+
+if [[ -z "$cvmfs_modulepath" ]]; then
+    echo "No CVMFS module trees on MODULEPATH; keeping the existing cache." >&2
+    exit 0
+fi
+
+# A repository that is unmounted, or wedged as a dead Fuse endpoint, spiders
+# as "this tree holds no modules" and would publish a cache that hides
+# everything in it until the next refresh. Bailing out keeps the last good
+# cache in place instead.
+for repo in {{ cvmfs_repositories | join(' ') }}; do
+    if ! timeout 60 ls "/cvmfs/${repo}" >/dev/null 2>&1; then
+        echo "/cvmfs/${repo} is not readable; skipping spider cache refresh." >&2
+        exit 0
+    fi
+done
+
+# update_lmod_system_cache_files stamps the timestamp file before spidering
+# and moves it into place afterwards, so the timestamp stays older than the
+# cache files it describes — which is how Lmod decides the cache is valid.
+exec "${LMOD_DIR}/update_lmod_system_cache_files" \
+    -d "$CACHE_DIR" -t "$TIMESTAMP_FILE" "$cvmfs_modulepath"

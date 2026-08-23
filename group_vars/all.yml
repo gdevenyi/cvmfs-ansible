@@ -25,3 +25,19 @@ neurodesk_server_url: >-
   http://s1nikhef-cvmfs.openhtc.io/cvmfs/@fqrn@;
   http://s1bnl-cvmfs.openhtc.io/cvmfs/@fqrn@;
   http://s1perth-cvmfs.openhtc.io/cvmfs/@fqrn@
+
+# Lmod spider cache
+# A system-wide spider cache lets `module spider` read a prebuilt index
+# instead of walking both CVMFS module trees (~21s cold, ~1.3s cached), and
+# stops each user from building a private 9MB copy under ~/.cache/lmod.
+# Skipped automatically on the Lmod 6.6 targets (Ubuntu 22.04, Debian 11),
+# whose cache writer emits a broken cache — see templates/cvmfs_modules.sh.j2.
+lmod_spider_cache_enabled: true
+lmod_spider_cache_dir: /var/cache/lmod
+lmod_spider_cache_timestamp: /var/cache/lmod/system.txt
+# systemd OnCalendar expression for the refresh timer. Neurodesk publishes
+# new container modules continuously, so a stale cache hides them from
+# `module avail` until the next refresh.
+lmod_spider_cache_refresh: hourly
+# RandomizedDelaySec, in seconds: jitter so a fleet does not refresh in lockstep.
+lmod_spider_cache_refresh_jitter: 600

@@ -31,6 +31,9 @@ This is infrastructure-as-code, not an application repo. There is no `src/`, ser
 5. install Apptainer (needed by Neurodesk containers) — PPA on Ubuntu, upstream GitHub `.deb` on Debian
 6. deploy shell integration for Alliance + Neurodesk modules
 7. restart `autofs` if needed and verify mounts/probes/apptainer
+8. build the Lmod spider cache for both module trees and enable the systemd
+   timer that refreshes it hourly (skipped, and undone, on the Lmod 6.6
+   targets Ubuntu 22.04 / Debian 11)
 
 ### Data/config flow
 
@@ -51,6 +54,10 @@ This is infrastructure-as-code, not an application repo. There is no `src/`, ser
 - `/etc/cvmfs/keys/ardc.edu.au/neurodesk.ardc.edu.au.pub`
 - `/usr/share/module.sh`
 - `/etc/profile.d/zz-cvmfs-modules.sh` (named so it sorts after `lmod.sh`)
+- `/etc/lmod/lmodrc.lua` (`scDescriptT` pointing at the spider cache)
+- `/usr/local/sbin/update-lmod-spider-cache`
+- `/etc/systemd/system/lmod-spider-cache.{service,timer}`
+- `/var/cache/lmod/` (spider cache + `system.txt` timestamp)
 - `/etc/auto.master.d/cvmfs.autofs`
 - `/cvmfs/soft.computecanada.ca`
 - `/cvmfs/neurodesk.ardc.edu.au`
@@ -136,6 +143,9 @@ ls /cvmfs/soft.computecanada.ca
 ls /cvmfs/neurodesk.ardc.edu.au
 apptainer --version
 bash -lc 'module avail'
+bash -lc 'module --config'          # should list /var/cache/lmod
+systemctl status lmod-spider-cache.timer
+sudo /usr/local/sbin/update-lmod-spider-cache
 ```
 
 ## Code Conventions & Common Patterns
@@ -179,6 +189,9 @@ bash -lc 'module avail'
 - `templates/neurodesk.key.j2` — Neurodesk public key
 - `templates/module.sh.j2` — shell-specific Lmod dispatcher
 - `templates/cvmfs_modules.sh.j2` — profile script that wires Alliance + Neurodesk into shell sessions (deployed as `/etc/profile.d/zz-cvmfs-modules.sh` so it sorts after `lmod.sh`)
+- `templates/lmodrc.lua.j2` — points Lmod at the system spider cache
+- `templates/update-lmod-spider-cache.j2` — spider cache refresh script; derives `MODULEPATH` by sourcing the deployed profile script
+- `templates/lmod-spider-cache.service.j2` / `templates/lmod-spider-cache.timer.j2` — hourly refresh units
 - `tests/lib.sh` — shared test-harness logging, SSH wrappers, state loading, target table + resolver, and optional diagnostics (`TEST_DIAG=1`)
 - `tests/create-vm.sh` — local libvirt test environment creation (target-aware via `TARGET=distro:version`)
 - `tests/test-vm.sh` — remote behavior verification
@@ -205,6 +218,8 @@ Important constraints:
 - preserve shared SSH harness options in `tests/lib.sh`, especially `UserKnownHostsFile=/dev/null` so tests do not write to the user's SSH known_hosts
 - preserve exact Neurodesk server URL chain unless you are intentionally updating mirrors
 - do not auto-source Alliance's `bash.sh` from `cvmfs_modules.sh.j2`; only add `MODULEPATH` entries so users opt in via `module load`
+- keep the spider cache's `MODULEPATH` derived from `/etc/profile.d/zz-cvmfs-modules.sh` rather than reimplemented; a cache built over a different path set silently misreports what `module avail` shows
+- keep `lmod_cache_writer_broken` as the single gate for both `LMOD_IGNORE_CACHE` and the spider cache tasks
 
 ## Testing & QA
 
@@ -241,6 +256,9 @@ All supported targets:
 - `module` command is available
 - Alliance modules are visible (`StdEnv/2023`)
 - Neurodesk modules are visible
+- the Lmod spider cache exists, Lmod reports it, the refresh timer is
+  enabled and active, and a manual refresh succeeds (skipped on Ubuntu
+  22.04 / Debian 11)
 - expected config files exist
 
 ### Quality expectations for changes

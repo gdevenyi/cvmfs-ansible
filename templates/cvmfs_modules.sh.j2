@@ -21,8 +21,7 @@ if [ -n "$_CVMFS_MODULES_SOURCED" ]; then
 fi
 _CVMFS_MODULES_SOURCED=1
 
-{% if (ansible_facts["distribution"] == "Ubuntu" and ansible_facts["distribution_version"] == "22.04")
-   or (ansible_facts["distribution"] == "Debian" and ansible_facts["distribution_major_version"] == "11") %}
+{% if lmod_cache_writer_broken | bool %}
 # Ubuntu 22.04 and Debian 11 both ship Lmod 6.6 (2016). Its spider-cache
 # writer mis-escapes some metadata in the Alliance/Neurodesk modulefiles,
 # producing a syntactically invalid moduleT.x86_64_Linux.lua. The first
@@ -30,7 +29,8 @@ _CVMFS_MODULES_SOURCED=1
 # invocation reads it and crashes with "'}' expected (to close '{' …)
 # near '['". Disabling cache reads keeps `module avail` correct at the
 # cost of a per-call rescan — only on those two releases. Newer Lmod
-# (Ubuntu 24.04+, Debian 12+) escapes correctly and uses the cache.
+# (Ubuntu 24.04+, Debian 12+) escapes correctly, which is what the
+# system spider cache in /etc/lmod/lmodrc.lua relies on.
 export LMOD_IGNORE_CACHE=yes
 {% endif %}
 
