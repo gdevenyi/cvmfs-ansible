@@ -1,31 +1,36 @@
 # CVMFS + Lmod Setup
 
-An Ansible-based repository for provisioning Ubuntu or Debian hosts with:
+An Ansible-based repository for provisioning Ubuntu, Debian or Arch Linux hosts with:
 
 - the CVMFS client
 - the Alliance software repository: `soft.computecanada.ca`
 - the Neurodesk repository: `neurodesk.ardc.edu.au`
 - Lmod integration so both repositories are available through `module`
 
-Supported targets: **Ubuntu 22.04 / 24.04 / 26.04** and
-**Debian 11 / 12 / 13** (the playbook fails fast on anything else). The
-libvirt-based test harness can validate all six in a single sequential run.
+Supported targets: **Ubuntu 22.04 / 24.04 / 26.04**, **Debian 11 / 12 / 13**
+and **Arch Linux** (any derivative Ansible reports in the `Archlinux` family,
+including CachyOS, EndeavourOS and Manjaro). The playbook fails fast on
+anything else. The libvirt-based test harness validates the six apt targets in
+a single sequential run; Arch is supported but opt-in, because `cvmfs` and
+`autofs` are AUR-only there and the run includes a source build.
 
 This repository is intentionally small: the main deliverable is `site.yml`, supported by Jinja templates, shared variables, and a libvirt-based test harness.
 
 ## What This Configures
 
-On a supported Ubuntu or Debian host, the playbook:
+On a supported host, the playbook:
 
-1. installs prerequisite packages (`fuse3`, `autofs`, `wget`, `lsb-release`; plus `software-properties-common` on Ubuntu)
-2. installs the CVMFS release package and `cvmfs`, then repairs any repository
-   left as a dead Fuse endpoint by an earlier package upgrade (see
+1. installs prerequisite packages (`fuse3`, `autofs`, `wget`, `lsb-release`; plus `software-properties-common` on Ubuntu). On Arch, `autofs` is AUR-only, so `base-devel` comes in here instead and `autofs` arrives in step 2
+2. installs CVMFS — the CVMFS release package plus `cvmfs` from CERN's apt
+   repository on the Debian family, or `autofs` and `cvmfs` built from the AUR
+   with `makepkg` on Arch — then repairs any repository left as a dead Fuse
+   endpoint by an earlier package upgrade (see
    [Troubleshooting](#chksetup-reports-no-public-keys-or-an-undefined-cvmfs_server_url))
 3. configures CVMFS to use:
    - `soft.computecanada.ca`
    - `neurodesk.ardc.edu.au`
 4. installs Lmod
-5. installs Apptainer (required by Neurodesk container workflows) — from the upstream PPA on Ubuntu, from the upstream GitHub release `.deb` on Debian (Launchpad PPAs don't serve Debian)
+5. installs Apptainer (required by Neurodesk container workflows) — from the upstream PPA on Ubuntu, from the upstream GitHub release `.deb` on Debian (Launchpad PPAs don't serve Debian), and from `[extra]` on Arch
 6. deploys shell integration so login shells can see both module trees
 7. verifies:
    - `cvmfs_config chksetup`
@@ -87,9 +92,12 @@ Required to run the playbook:
 - Ansible / `ansible-playbook`
 - SSH access to the target
 - a sudo-capable remote user
-- the `community.general` Ansible collection (used for `modprobe`)
+- the `community.general` Ansible collection (`modprobe`, and on Arch
+  `pacman` and `sudoers`)
+- the `kewlfft.aur` collection — only used on Arch targets, to build `cvmfs`
+  and `autofs` from the AUR
 
-Install the collection if needed:
+Install the collections if needed:
 
 ```bash
 ansible-galaxy collection install -r requirements.yml
@@ -99,13 +107,26 @@ ansible-galaxy collection install -r requirements.yml
 
 Expected target characteristics:
 
-- Ubuntu 22.04 / 24.04 / 26.04 or Debian 11 / 12 / 13
-- `apt` available
+- Ubuntu 22.04 / 24.04 / 26.04, Debian 11 / 12 / 13, or Arch Linux
+- `apt` (Ubuntu/Debian) or `pacman` (Arch) available
 - internet access to CVMFS mirrors and package repositories
 - sudo available for the connecting user
 
 The playbook starts with a guard task that aborts on any other distribution
 or release, so misuse fails immediately rather than mid-install.
+
+On Arch, `cvmfs` and `autofs` have no official packages and are built from the
+AUR. The playbook creates an unprivileged `aur_builder` user (makepkg refuses
+to run as root), grants it passwordless `pacman`, and runs `makepkg` for both.
+The `cvmfs` build is a full cmake compile — budget 15-30 minutes. Run
+`pacman -Syu` before applying: building AUR packages against a partially
+upgraded system is the usual way this fails.
+
+The playbook also installs `protobuf`, which the CVMFS client does not need on
+the Debian family. It is a workaround: the AUR `cvmfs` PKGBUILD omits protobuf
+from its `makedepends`, so without it the build dies at
+`Could NOT find Protobuf`. Remove it from the prerequisite list once the AUR
+package declares it.
 
 ### Optional local test harness requirements
 
@@ -310,9 +331,10 @@ removes one if a target is downgraded into that state.
 
 - `/usr/share/module.sh` dispatches to the installed Lmod init script
 - `/etc/profile.d/zz-cvmfs-modules.sh` wires Alliance + Neurodesk into `MODULEPATH`
-  (the `zz-` prefix forces it to sort after `lmod.sh`, which on Ubuntu 22.04
-  resets `MODULEPATH` from `/etc/lmod/modulespath` and would otherwise wipe
-  our additions)
+  (the `zz-` prefix forces it to sort after Lmod's own profile script —
+  `lmod.sh` on the Debian family, `modules.sh` on Arch — because on Ubuntu
+  22.04 that script resets `MODULEPATH` from `/etc/lmod/modulespath` and
+  would otherwise wipe our additions)
 - `/etc/bash.bashrc` gets a managed block to source both scripts for bash sessions
 
 ## Validation After Apply
@@ -329,6 +351,12 @@ apptainer --version
 bash -lc 'module avail'
 bash -lc 'module --config' | grep -A2 'Cache Directory'
 systemctl status lmod-spider-cache.timer
+systemctl is-active autofs
+
+# the autofs master-map drop-in — /etc on the Debian family,
+# /etc/autofs on Arch (its autofs is built --sysconfdir=/etc/autofs)
+ls -l /etc/auto.master.d/cvmfs.autofs          # Ubuntu / Debian
+ls -l /etc/autofs/auto.master.d/cvmfs.autofs   # Arch
 ```
 
 Expected outcomes:
@@ -343,7 +371,7 @@ Expected outcomes:
 ## Local End-to-End Testing with Libvirt
 
 The repository includes a local VM workflow to validate the playbook on a
-clean Ubuntu or Debian guest. The default target is **`ubuntu:26.04`**;
+clean Ubuntu, Debian or Arch guest. The default target is **`ubuntu:26.04`**;
 any of the supported targets can be selected with `TARGET=<distro:version>`.
 
 ### Supported targets and per-target defaults
@@ -358,8 +386,21 @@ any of the supported targets can be selected with `TARGET=<distro:version>`.
 | `debian:11`    | `cvmfs-test-debian-11`   | `192.168.122.31` | `/var/lib/libvirt/images/debian-11-base.qcow2`    |
 | `debian:12`    | `cvmfs-test-debian-12`   | `192.168.122.32` | `/var/lib/libvirt/images/debian-12-base.qcow2`    |
 | `debian:13`    | `cvmfs-test-debian-13`   | `192.168.122.33` | `/var/lib/libvirt/images/debian-13-base.qcow2`    |
+| `arch:rolling` | `cvmfs-test-arch-rolling`| `192.168.122.40` | `/var/lib/libvirt/images/arch-rolling-base.qcow2` |
 
-Ubuntu VMs use the `ubuntu` cloud-init user; Debian VMs use `debian`.
+Ubuntu VMs use the `ubuntu` cloud-init user, Debian VMs `debian`, and Arch
+VMs `arch`.
+
+Two things are specific to `arch:rolling`:
+
+- The Arch image URL points at `images/latest/`, which moves, unlike the
+  pinned Ubuntu and Debian URLs. Delete
+  `/var/lib/libvirt/images/arch-rolling-base.qcow2` to pick up a newer
+  snapshot. A stale image makes the AUR builds fight a partial upgrade, so
+  the harness also sets cloud-init `package_upgrade: true` on this target.
+- It is excluded from the default `./tests/test-all.sh` sweep (see
+  `TARGETS_DEFAULT` in `tests/lib.sh`), because the AUR `cvmfs` cmake build
+  adds 15-30 minutes on the default 2 vCPU. `VM_VCPUS=4` helps.
 
 ### Create the VM
 
@@ -367,6 +408,7 @@ Ubuntu VMs use the `ubuntu` cloud-init user; Debian VMs use `debian`.
 ./tests/create-vm.sh                  # ubuntu:26.04 (default)
 TARGET=ubuntu:22.04 ./tests/create-vm.sh
 TARGET=debian:13    ./tests/create-vm.sh
+TARGET=arch:rolling ./tests/create-vm.sh
 ```
 
 Other defaults:
@@ -407,7 +449,8 @@ ssh -o IdentitiesOnly=yes \
   ubuntu@192.168.122.26
 ```
 
-For Debian targets, change the username and VM-specific path/IP, for example:
+For Debian and Arch targets, change the username and VM-specific path/IP, for
+example:
 
 ```bash
 ssh -o IdentitiesOnly=yes \
@@ -415,6 +458,12 @@ ssh -o IdentitiesOnly=yes \
   -o UserKnownHostsFile=/dev/null \
   -i "${TMPDIR:-/tmp}/cvmfs-setup/cvmfs-test-debian-13/id_ed25519" \
   debian@192.168.122.33
+
+ssh -o IdentitiesOnly=yes \
+  -o StrictHostKeyChecking=no \
+  -o UserKnownHostsFile=/dev/null \
+  -i "${TMPDIR:-/tmp}/cvmfs-setup/cvmfs-test-arch-rolling/id_ed25519" \
+  arch@192.168.122.40
 ```
 
 If you used `tests/test-single.sh` or `tests/test-all.sh`, keep the VM running
@@ -433,11 +482,15 @@ ansible-playbook -i 192.168.122.26, -u ubuntu \
   site.yml
 ```
 
-For a Debian VM the user changes to `debian`, e.g.:
+For a Debian VM the user changes to `debian`, and for an Arch VM to `arch`:
 
 ```bash
 ansible-playbook -i 192.168.122.33, -u debian \
   --private-key "${TMPDIR:-/tmp}/cvmfs-setup/cvmfs-test-debian-13/id_ed25519" \
+  site.yml
+
+ansible-playbook -i 192.168.122.40, -u arch \
+  --private-key "${TMPDIR:-/tmp}/cvmfs-setup/cvmfs-test-arch-rolling/id_ed25519" \
   site.yml
 ```
 
@@ -483,6 +536,7 @@ lifecycle for one target.
 ```bash
 ./tests/test-single.sh                    # ubuntu:26.04 (default)
 TARGET=debian:12 ./tests/test-single.sh   # a specific target
+TARGET=arch:rolling ./tests/test-single.sh
 KEEP_ON_FAILURE=1 ./tests/test-single.sh  # leave VM up on failure
 SKIP_TEARDOWN=1 ./tests/test-single.sh    # leave VM up on success
 ```
@@ -491,19 +545,26 @@ When `SKIP_TEARDOWN=1` or `KEEP_ON_FAILURE=1` leaves the VM running,
 `test-single.sh` prints the preserved SSH key path and an interactive SSH
 command you can paste directly.
 
-### All supported targets in a row
+### All default targets in a row
 
-`tests/test-all.sh` walks every supported target sequentially, running
-create → apply → verify → teardown for each, and prints a final pass/fail
-summary.
+`tests/test-all.sh` walks every target in `TARGETS_DEFAULT` sequentially,
+running create → apply → verify → teardown for each, and prints a final
+pass/fail summary.
 
 ```bash
 ./tests/test-all.sh
 ```
 
+`arch:rolling` is **not** in the default sweep — the AUR `cvmfs` source build
+would dominate it. Include it explicitly when you want it:
+
+```bash
+TARGETS='ubuntu:26.04 arch:rolling' ./tests/test-all.sh
+```
+
 Useful knobs:
 
-- `TARGETS="ubuntu:22.04 debian:13"` — restrict the target list
+- `TARGETS="ubuntu:22.04 debian:13"` — restrict or extend the target list
 - `KEEP_ON_FAILURE=1` — leave a broken VM running for inspection
 - `SKIP_TEARDOWN=1` — leave all VMs running (even on success)
 - `CONTINUE_ON_ERROR=1` — don't stop on the first failed target
@@ -522,7 +583,11 @@ The playbook is designed to be rerunnable.
 Important idempotence behavior:
 
 - package facts gate CVMFS release bootstrap
-- `cvmfs_config setup` is guarded by `creates: /etc/auto.master.d/cvmfs.autofs`
+- `cvmfs_config setup` is guarded by `creates:` on the autofs master-map
+  drop-in (`/etc/auto.master.d/cvmfs.autofs`, or
+  `/etc/autofs/auto.master.d/cvmfs.autofs` on Arch)
+- the AUR builds use `state: present`, so a configured Arch host reinstalls
+  nothing on a second apply
 - templates only notify `Restart autofs` when content changes
 - verification tasks use `changed_when: false`
 - the spider cache is rebuilt only when it is missing or when the templates
@@ -631,6 +696,30 @@ Expected. This repository intentionally skips tasks in check mode that need:
 
 Use `--check` as a safety preview, not as a full functional validation.
 
+### On Arch, everything installs but CVMFS mounts hang forever
+
+Symptom: `cvmfs_config chksetup` never returns, and `ls /cvmfs/<repo>` blocks.
+The stuck processes sit in `D` state with wchan `request_wait_answer` and
+survive `kill -9`.
+
+This is not a configuration problem. CVMFS releases before 2.14.1 return a
+curl handle to their internal pool whose DNS resolver thread vanished across
+the fork into daemon mode; curl 8.20 and newer then deadlock on it
+([cvmfs#4249](https://github.com/cvmfs/cvmfs/issues/4249)). CVMFS 2.14.1
+contains the fix.
+
+The AUR `cvmfs` package lagged at 2.13.3, so check what you actually have:
+
+```bash
+pacman -Q cvmfs curl
+```
+
+If `cvmfs` is older than 2.14.1 and `curl` is 8.20 or newer, rebuild `cvmfs`
+from an updated PKGBUILD (or downgrade curl to 8.19 as a stopgap). The same
+AUR package also omits `protobuf` from `makedepends`, which is why the
+playbook installs it — see the Arch notes under
+[Target machine](#target-machine).
+
 ### `module avail` works for Neurodesk but not Alliance
 
 The verifier checks for `StdEnv/2023`, not the repo FQDN. That is deliberate: Alliance modules do not necessarily print `soft.computecanada.ca` in `module avail` output.
@@ -650,7 +739,21 @@ You can override VM settings, for example:
 VM_NAME=my-cvmfs-test VM_IP=192.168.122.30 ./tests/create-vm.sh
 TARGET=ubuntu:22.04 ./tests/create-vm.sh
 TARGET=debian:13    ./tests/create-vm.sh
+TARGET=arch:rolling ./tests/create-vm.sh
 ```
+
+On `arch:rolling` specifically, a guest that boots but never gets an address
+usually means the network-config went out with a `match:` block instead of the
+explicit `eth0` device key. Arch boots `net.ifnames=0`, so the NIC is `eth0`,
+and cloud-init renders through networkd, whose renderer drops `match:` and
+writes `Name=<config key>` — a unit that matches no interface, leaving
+`systemd-networkd-wait-online` hung forever. `create-vm.sh` names the device
+explicitly for this reason.
+
+`create-vm.sh` also reboots Arch guests once after cloud-init. The cloud-init
+`pacman -Syu` normally installs a new kernel, and until the guest boots onto
+it `/lib/modules/$(uname -r)` no longer exists — which makes `modprobe`, and
+so the playbook's FUSE task, fail with ENOENT.
 
 ### SSH fails with “too many authentication failures”
 
@@ -683,6 +786,7 @@ Automated single-target lifecycle:
 ```bash
 ./tests/test-single.sh
 TARGET=debian:12 ./tests/test-single.sh
+TARGET=arch:rolling ./tests/test-single.sh
 ```
 
 Or step by step:
@@ -696,10 +800,11 @@ VM_NAME=cvmfs-test-ubuntu-26-04 ./tests/test-vm.sh 192.168.122.26 ubuntu
 ./tests/teardown-vm.sh cvmfs-test-ubuntu-26-04
 ```
 
-### Validate on every supported target
+### Validate on every default target
 
 ```bash
 ./tests/test-all.sh
+TARGETS='ubuntu:26.04 arch:rolling' ./tests/test-all.sh   # Arch is opt-in
 ```
 
 ## Maintenance Notes
@@ -711,5 +816,10 @@ When changing this repository:
 - prefer Ansible modules over ad-hoc shell
 - preserve the exact Neurodesk key and server chain unless intentionally updating them
 - preserve the transient-key behavior in `tests/create-vm.sh`
+- keep the autofs paths behind the `cvmfs_autofs_master_entry` /
+  `cvmfs_auto_map` play vars; Arch's autofs uses `/etc/autofs` as its
+  sysconfdir, so a hard-coded `/etc/auto.master.d` writes a file nothing reads
+- keep the explicit network device name in `tests/create-vm.sh` for Debian
+  (`enp1s0`) and Arch (`eth0`); only Ubuntu may use the `match:` glob
 - re-run the VM workflow for non-trivial changes
 - `TEST_DIAG=1` on `tests/test-vm.sh` (or via `test-single.sh` / `test-all.sh`) enables a diagnostic dump via `tests/lib.sh` when a check fails

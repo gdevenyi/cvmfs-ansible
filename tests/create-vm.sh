@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # create-vm.sh — Provision a libvirt VM for CVMFS testing.
 #
-# Creates an Ubuntu or Debian cloud-image VM on the default libvirt NAT
+# Creates an Ubuntu, Debian or Arch cloud-image VM on the default libvirt NAT
 # network with a static IP, per-run SSH key injection, and waits for
 # cloud-init.
 #
@@ -15,6 +15,7 @@
 #   ./tests/create-vm.sh
 #   TARGET=ubuntu:22.04 ./tests/create-vm.sh
 #   TARGET=debian:13    ./tests/create-vm.sh
+#   TARGET=arch:rolling ./tests/create-vm.sh
 set -euo pipefail
 # shellcheck disable=SC2154
 trap 's=$?; echo >&2 "$0: Error on line $LINENO: $BASH_COMMAND"; exit $s' ERR
@@ -92,9 +93,18 @@ EOF
 }
 
 create_seed_iso() {
-    local tmp_dir ssh_key
+    local tmp_dir ssh_key upgrade_line=''
     tmp_dir="$(mktemp -d)"
     ssh_key="$(cat "$SSH_PUB_KEY")"
+
+    # Arch is rolling, and the images/latest/ snapshot is always some days
+    # behind the mirrors. Installing onto that mismatch is the classic Arch
+    # partial-upgrade failure, and it is what breaks the AUR source builds
+    # the playbook runs. Bring the image current before Ansible touches it.
+    # The pinned Ubuntu/Debian images have no equivalent problem.
+    if [[ "${RESOLVED_DISTRO:-}" == 'arch' ]]; then
+        upgrade_line='package_upgrade: true'
+    fi
 
     cat > "${tmp_dir}/meta-data" <<EOF
 instance-id: ${VM_NAME}
@@ -106,6 +116,7 @@ EOF
 hostname: ${VM_NAME}
 fqdn: ${VM_NAME}
 manage_etc_hosts: false
+${upgrade_line}
 users:
   - name: ${SSH_USER}
     ssh_authorized_keys:
@@ -121,19 +132,30 @@ write_files:
     permissions: '0644'
 EOF
 
-    # Network device naming and cloud-init quirks differ per distro family:
+    # Network device naming and cloud-init quirks differ per distro:
     #   - Ubuntu cloud images present as either `ens3` or `enp1s0` depending
-    #     on systemd version; the v2 `match:` block resolves it correctly on
-    #     the cloud-init shipped with all supported Ubuntu LTS releases.
+    #     on systemd version, and render through netplan, which honors a v2
+    #     `match:` block. That glob is the only form that covers both names.
     #   - Debian cloud images always present as `enp1s0`, but Debian 11's
     #     cloud-init 20.4 mistranslates v2 `match:` blocks into a literal
-    #     `interface0` device name and silently fails. Use the explicit
-    #     device key on Debian — that path is honored on every cloud-init.
-    if [[ "${RESOLVED_DISTRO:-}" == 'debian' ]]; then
+    #     `interface0` device name and silently fails.
+    #   - Arch boots with `net.ifnames=0` (GRUB_CMDLINE_LINUX in the image),
+    #     so the NIC is plain `eth0`. Arch also renders through networkd, and
+    #     that renderer DROPS `match:` outright — it writes `Name=<config
+    #     key>` and the unit then matches nothing, leaving the guest with no
+    #     address and systemd-networkd-wait-online hung forever.
+    # So only Ubuntu gets the `match:` form; everything else names the device.
+    local net_device=''
+    case "${RESOLVED_DISTRO:-}" in
+        debian) net_device='enp1s0' ;;
+        arch)   net_device='eth0'   ;;
+    esac
+
+    if [[ -n "$net_device" ]]; then
         cat > "${tmp_dir}/network-config" <<EOF
 version: 2
 ethernets:
-  enp1s0:
+  ${net_device}:
     dhcp4: false
     addresses:
       - ${VM_IP}/24
@@ -213,6 +235,31 @@ wait_for_ssh() {
     die "Timed out waiting for ${VM_NAME} after ${max_wait}s."
 }
 
+# Arch's cloud-init runs a full `pacman -Syu` (see create_seed_iso). When that
+# pulls a new kernel — it usually does, the image snapshot is always a few
+# weeks behind — the running kernel's /lib/modules tree is replaced by the new
+# one's, so anything that consults it fails with ENOENT. Ansible's modprobe
+# module reads /lib/modules/$(uname -r)/modules.builtin and dies there. Boot
+# onto the kernel that is actually installed before handing the VM over.
+reboot_onto_new_kernel() {
+    [[ "${RESOLVED_DISTRO:-}" == 'arch' ]] || return 0
+
+    local -a ssh_opts=("${SSH_OPTS[@]}" -o ConnectTimeout=5 -o BatchMode=yes -i "$SSH_KEY_FILE")
+
+    log_info "Rebooting ${VM_NAME} onto the kernel cloud-init installed..."
+    ssh "${ssh_opts[@]}" "${SSH_USER}@${VM_IP}" 'sudo systemctl reboot' >/dev/null 2>&1 || true
+
+    # Wait for it to actually go down first, otherwise wait_for_ssh can
+    # succeed against the host that is still shutting down.
+    local waited=0
+    while (( waited < 60 )) && ping -c 1 -W 1 "$VM_IP" >/dev/null 2>&1; do
+        sleep 2
+        waited=$((waited + 2))
+    done
+
+    wait_for_ssh
+}
+
 check_prereqs
 log_info "=== CVMFS Test VM Setup (${TARGET}) ==="
 printf '\n'
@@ -222,6 +269,7 @@ prepare_runtime
 create_seed_iso
 create_vm
 wait_for_ssh
+reboot_onto_new_kernel
 
 printf '\n'
 log_info "=== VM Ready ==="

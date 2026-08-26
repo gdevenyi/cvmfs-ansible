@@ -87,6 +87,15 @@ run_check "Neurodesk config.d exists" "test -f /etc/cvmfs/config.d/neurodesk.ard
 run_check "Neurodesk public key exists" "test -f /etc/cvmfs/keys/ardc.edu.au/neurodesk.ardc.edu.au.pub"
 run_check "/etc/profile.d/zz-cvmfs-modules.sh exists" "test -f /etc/profile.d/zz-cvmfs-modules.sh"
 run_check "/usr/share/module.sh exists" "test -f /usr/share/module.sh"
+# Arch's autofs is built --sysconfdir=/etc/autofs, so the master-map drop-in
+# lands one directory deeper than on the Debian family. Ask the guest rather
+# than matching on $ID: Arch derivatives report themselves (cachyos, manjaro)
+# but lay autofs out the same way.
+autofs_conf_dir="$(ssh_host_bash "$HOST" \
+    'test -d /etc/autofs/auto.master.d && echo /etc/autofs || echo /etc' 2>/dev/null || echo /etc)"
+run_check "${autofs_conf_dir}/auto.master.d/cvmfs.autofs exists" \
+    "test -f ${autofs_conf_dir}/auto.master.d/cvmfs.autofs"
+run_check "autofs is running" "systemctl is-active --quiet autofs"
 if [[ "$os_id" != "ubuntu:22.04" && "$os_id" != "debian:11" ]]; then
     run_check "/usr/local/sbin/update-lmod-spider-cache exists" "test -x /usr/local/sbin/update-lmod-spider-cache"
     run_check "/etc/lmod/lmodrc.lua exists" "test -f /etc/lmod/lmodrc.lua"

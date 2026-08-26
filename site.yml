@@ -1,5 +1,5 @@
 ---
-# site.yml — Install and configure CVMFS + Lmod on Ubuntu or Debian
+# site.yml — Install and configure CVMFS + Lmod on Ubuntu, Debian or Arch
 # Usage:
 #   ansible-playbook site.yml -i <HOST>,
 #   ansible-playbook site.yml --check -i <HOST>,   (dry-run)
@@ -17,6 +17,24 @@
       - "11"
       - "12"
       - "13"
+    # Arch is rolling, so there is no version list to match. Gate on
+    # os_family rather than distribution: Ansible reports CachyOS as
+    # distribution 'Archlinux' but Manjaro/EndeavourOS as themselves, and
+    # all of them land in the 'Archlinux' family.
+    is_arch: "{{ ansible_facts['os_family'] == 'Archlinux' }}"
+    is_debian_family: "{{ ansible_facts['os_family'] == 'Debian' }}"
+    # Arch's autofs is built --sysconfdir=/etc/autofs, so its master map
+    # includes +dir:/etc/autofs/auto.master.d instead of /etc/auto.master.d.
+    # The AUR cvmfs package seds cvmfs_config to match, so `cvmfs_config
+    # setup` writes the drop-in there too.
+    autofs_conf_dir: "{{ '/etc/autofs' if ansible_facts['os_family'] == 'Archlinux' else '/etc' }}"
+    cvmfs_autofs_master_entry: "{{ autofs_conf_dir }}/auto.master.d/cvmfs.autofs"
+    cvmfs_auto_map: "{{ autofs_conf_dir }}/auto.cvmfs"
+    # Debian's lmod deb ships /etc/profile.d/lmod.sh; Arch's ships modules.sh.
+    lmod_profile_script: "{{ '/etc/profile.d/modules.sh' if ansible_facts['os_family'] == 'Archlinux' else '/etc/profile.d/lmod.sh' }}"
+    # makepkg refuses to run as root, so AUR builds go through a dedicated
+    # unprivileged user.
+    aur_build_user: aur_builder
     # Ubuntu 22.04 and Debian 11 ship Lmod 6.6, whose spider-cache writer
     # mis-escapes Alliance/Neurodesk modulefile metadata and emits a cache
     # Lmod then chokes on. Those targets read no cache (LMOD_IGNORE_CACHE,
@@ -44,15 +62,17 @@
     # ---------------------------------------------------------------
     # Fail fast on unsupported hosts so misuse surfaces here rather than
     # deep inside an apt task with a confusing error.
-    - name: Assert target is a supported Ubuntu or Debian release
+    - name: Assert target is a supported Ubuntu, Debian or Arch release
       ansible.builtin.assert:
         that:
           - (ansible_facts["distribution"] == 'Ubuntu' and ansible_facts["distribution_version"] in supported_ubuntu_versions)
             or (ansible_facts["distribution"] == 'Debian' and ansible_facts["distribution_major_version"] in supported_debian_versions)
+            or (is_arch | bool)
         fail_msg: >-
           Unsupported target: {{ ansible_facts["distribution"] }} {{ ansible_facts["distribution_version"] }}.
           Supported: Ubuntu {{ supported_ubuntu_versions | join(', ') }};
-          Debian {{ supported_debian_versions | join(', ') }}.
+          Debian {{ supported_debian_versions | join(', ') }};
+          any Arch Linux derivative (os_family Archlinux).
         success_msg: "Target {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }} is supported."
 
     - name: Gather installed package facts
@@ -62,7 +82,7 @@
     # ---------------------------------------------------------------
     # 1. Prerequisites
     # ---------------------------------------------------------------
-    - name: Install prerequisite packages
+    - name: Install prerequisite packages (Debian family)
       ansible.builtin.apt:
         name: "{{ prereq_packages }}"
         state: present
@@ -78,6 +98,29 @@
             ['fuse3', 'autofs', 'wget', 'lsb-release']
             + (['software-properties-common'] if ansible_facts["distribution"] == 'Ubuntu' else [])
           }}
+      when: is_debian_family | bool
+
+    # Arch has no autofs package, so it is missing from this list and gets
+    # built from the AUR below instead. base-devel is what makepkg needs for
+    # that. Everything else keeps the same name it has on the Debian family.
+    #
+    # protobuf is not a CVMFS client dependency on the Debian family — it is
+    # here because the AUR cvmfs PKGBUILD omits it from makedepends, and
+    # CMakeLists.txt find_package(Protobuf) then fails the build with
+    # "Could NOT find Protobuf". Drop it once the AUR package declares it.
+    - name: Install prerequisite packages (Arch Linux)
+      community.general.pacman:
+        name:
+          - fuse3
+          - wget
+          - lsb-release
+          - base-devel
+          - protobuf
+        state: present
+        update_cache: true
+      when:
+        - is_arch | bool
+        - not ansible_check_mode
 
     - name: Ensure FUSE kernel module is loaded
       community.general.modprobe:
@@ -87,48 +130,125 @@
     # ---------------------------------------------------------------
     # 2. CVMFS Client
     # ---------------------------------------------------------------
-    - name: Download CVMFS release package
-      # cvmrepo.s3.cern.ch hosts a fresher cvmfs-release than the
-      # ecsft.cern.ch/dist/ tree.
-      ansible.builtin.get_url:
-        url: https://cvmrepo.s3.cern.ch/cvmrepo/apt/cvmfs-release-latest_all.deb
-        dest: /tmp/cvmfs-release-latest_all.deb
-        mode: "0644"
-      when:
-        - not ansible_check_mode
-        - ansible_facts.packages['cvmfs-release'] is not defined
+    - name: Install CVMFS from the CERN apt repository (Debian family)
+      when: is_debian_family | bool
+      block:
+        - name: Download CVMFS release package
+          # cvmrepo.s3.cern.ch hosts a fresher cvmfs-release than the
+          # ecsft.cern.ch/dist/ tree.
+          ansible.builtin.get_url:
+            url: https://cvmrepo.s3.cern.ch/cvmrepo/apt/cvmfs-release-latest_all.deb
+            dest: /tmp/cvmfs-release-latest_all.deb
+            mode: "0644"
+          when:
+            - not ansible_check_mode
+            - ansible_facts.packages['cvmfs-release'] is not defined
 
-    - name: Install CVMFS release package
-      ansible.builtin.apt:
-        deb: /tmp/cvmfs-release-latest_all.deb
-      register: _cvmfs_release_install
-      when:
-        - not ansible_check_mode
-        - ansible_facts.packages['cvmfs-release'] is not defined
+        - name: Install CVMFS release package
+          ansible.builtin.apt:
+            deb: /tmp/cvmfs-release-latest_all.deb
+          register: _cvmfs_release_install
+          when:
+            - not ansible_check_mode
+            - ansible_facts.packages['cvmfs-release'] is not defined
 
-    - name: Update apt cache after adding CVMFS repo
-      ansible.builtin.apt:
-        update_cache: true
-      when:
-        - not ansible_check_mode
-        - _cvmfs_release_install is defined and _cvmfs_release_install is changed
+        - name: Update apt cache after adding CVMFS repo
+          ansible.builtin.apt:
+            update_cache: true
+          when:
+            - not ansible_check_mode
+            - _cvmfs_release_install is defined and _cvmfs_release_install is changed
 
-    - name: Install cvmfs package
-      ansible.builtin.apt:
-        name: cvmfs
-        state: present
-      when: not ansible_check_mode
+        - name: Install cvmfs package
+          ansible.builtin.apt:
+            name: cvmfs
+            state: present
+          when: not ansible_check_mode
+
+        - name: Remove CVMFS release deb
+          ansible.builtin.file:
+            path: /tmp/cvmfs-release-latest_all.deb
+            state: absent
+          when: not ansible_check_mode
+
+    # Arch has no official cvmfs or autofs package; both live in the AUR and
+    # are built from source with makepkg. makepkg refuses to run as root, so
+    # the builds go through an unprivileged user that is allowed to call
+    # pacman (which makepkg --syncdeps needs for build/runtime dependencies).
+    - name: Install autofs and CVMFS from the AUR (Arch Linux)
+      when: is_arch | bool
+      block:
+        - name: Create the AUR build user
+          ansible.builtin.user:
+            name: "{{ aur_build_user }}"
+            system: true
+            create_home: true
+            home: "/var/lib/{{ aur_build_user }}"
+            shell: /bin/bash
+
+        - name: Allow the AUR build user to run pacman
+          community.general.sudoers:
+            name: "allow-{{ aur_build_user }}-pacman"
+            user: "{{ aur_build_user }}"
+            commands: /usr/bin/pacman
+            nopassword: true
+
+        # The autofs PKGBUILD pins validpgpkeys to Ian Kent's key and ships
+        # .sign files alongside the kernel.org tarball; makepkg aborts with
+        # "unknown public key" until the build user's keyring holds it. The
+        # cvmfs PKGBUILD verifies md5sums only and needs nothing here.
+        - name: Import the autofs release signing key
+          become_user: "{{ aur_build_user }}"
+          ansible.builtin.command:
+            cmd: gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys {{ autofs_signing_key }}
+          vars:
+            autofs_signing_key: CD0A6E3CBB6768800B0736A8E7677380F54FD8A9
+          register: _autofs_key
+          changed_when: "'imported' in (_autofs_key.stderr | default(''))"
+          when: not ansible_check_mode
+
+        # autofs first, and in its own task rather than one list: the cvmfs
+        # package's post_install runs `cvmfs_config setup nocfgmod nostart`,
+        # which needs /etc/autofs/auto.master.d to already exist.
+        #
+        # TMPDIR: Arch mounts /tmp as a tmpfs sized at half of RAM, and the
+        # cvmfs cmake build (which vendors libressl) can fill it. /var/tmp is
+        # on disk.
+        - name: Build and install autofs from the AUR
+          become_user: "{{ aur_build_user }}"
+          environment:
+            TMPDIR: /var/tmp
+          kewlfft.aur.aur:
+            name: autofs
+            use: makepkg
+            state: present
+          when: not ansible_check_mode
+
+        - name: Build and install CVMFS from the AUR
+          become_user: "{{ aur_build_user }}"
+          environment:
+            TMPDIR: /var/tmp
+          kewlfft.aur.aur:
+            name: cvmfs
+            use: makepkg
+            state: present
+          when: not ansible_check_mode
 
     - name: Run cvmfs_config setup (configure autofs)
       ansible.builtin.command: cvmfs_config setup
       args:
-        creates: /etc/auto.master.d/cvmfs.autofs
+        creates: "{{ cvmfs_autofs_master_entry }}"
       when: not ansible_check_mode
 
-    - name: Remove CVMFS release deb
-      ansible.builtin.file:
-        path: /tmp/cvmfs-release-latest_all.deb
-        state: absent
+    # Arch packages never enable or start their services, so on a first Arch
+    # run autofs is installed but dead and the `Reload autofs` handler would
+    # fail against an inactive unit. A no-op on the Debian family, where the
+    # deb starts it at install time.
+    - name: Ensure autofs is enabled and running
+      ansible.builtin.systemd:
+        name: autofs
+        enabled: true
+        state: started
       when: not ansible_check_mode
 
     # A cvmfs package upgrade runs cvmfs-reload.service, which hot-reloads the
@@ -193,13 +313,13 @@
         mode: "0644"
       notify: Reload autofs
 
-    # cvmfs_config setup writes a bare /etc/auto.master.d/cvmfs.autofs; we
+    # cvmfs_config setup writes a bare auto.master.d/cvmfs.autofs; we
     # re-template it to add the autofs idle-unmount timeout so CVMFS stays
     # mounted instead of being unmounted after the 5-minute default.
     - name: Deploy CVMFS autofs master entry (idle-unmount timeout)
       ansible.builtin.template:
         src: cvmfs.autofs.j2
-        dest: /etc/auto.master.d/cvmfs.autofs
+        dest: "{{ cvmfs_autofs_master_entry }}"
         owner: root
         group: root
         mode: "0644"
@@ -242,17 +362,19 @@
     # ---------------------------------------------------------------
     # 4. Lmod
     # ---------------------------------------------------------------
+    # Already present on Arch from the prerequisites task; `package` covers
+    # both families because the package is named `lmod` on each.
     - name: Install Lmod
-      ansible.builtin.apt:
+      ansible.builtin.package:
         name: lmod
         state: present
       when: not ansible_check_mode
 
     # /usr/share/lmod/lmod is a packaging-guaranteed symlink to the installed
-    # versioned Lmod directory on the Ubuntu and Debian lmod debs, so we stat
-    # through it instead of scanning the filesystem. Using the symlink lets
-    # module.sh.j2 hard-code the path and survive Lmod version bumps with no
-    # playbook change.
+    # versioned Lmod directory on the Ubuntu, Debian and Arch lmod packages,
+    # so we stat through it instead of scanning the filesystem. Using the
+    # symlink lets module.sh.j2 hard-code the path and survive Lmod version
+    # bumps with no playbook change.
     - name: Verify Lmod bash init script exists
       ansible.builtin.stat:
         path: /usr/share/lmod/lmod/init/bash
@@ -269,9 +391,9 @@
         mode: "0644"
       when: not ansible_check_mode
 
-    - name: Verify Lmod profile.d symlink exists
+    - name: Verify Lmod profile.d script exists
       ansible.builtin.stat:
-        path: /etc/profile.d/lmod.sh
+        path: "{{ lmod_profile_script }}"
       register: _lmod_profile
       failed_when: not _lmod_profile.stat.exists
       when: not ansible_check_mode
@@ -279,12 +401,21 @@
     # ---------------------------------------------------------------
     # 5. Apptainer (required by Neurodesk container workflows)
     # ---------------------------------------------------------------
-    # Two install paths:
+    # Three install paths:
     #   - Ubuntu: PPA via deb822_repository + signed-by keyring fetched
     #     over HTTPS. `apt_repository: ppa:...` is avoided because its
     #     hkp-based key import is unreliable on newer Ubuntu.
     #   - Debian: upstream GitHub release deb (the PPA is Launchpad-only
     #     and has no Debian pocket).
+    #   - Arch: apptainer is in [extra], so a plain package install does it.
+    - name: Install Apptainer (Arch Linux)
+      community.general.pacman:
+        name: apptainer
+        state: present
+      when:
+        - is_arch | bool
+        - not ansible_check_mode
+
     - name: Install Apptainer from PPA (Ubuntu)
       when: ansible_facts["distribution"] == 'Ubuntu'
       block:
@@ -359,8 +490,9 @@
     # 6. Module Integration
     # ---------------------------------------------------------------
     # The dest is named `zz-cvmfs-modules.sh` so /etc/profile.d sources it
-    # AFTER lmod.sh. See the comment at the top of the template for the
-    # Ubuntu 22.04 reason.
+    # AFTER Lmod's own init script (lmod.sh on the Debian family, modules.sh
+    # on Arch — `zz-` sorts after both). See the comment at the top of the
+    # template for the Ubuntu 22.04 reason.
     - name: Deploy /etc/profile.d/zz-cvmfs-modules.sh
       ansible.builtin.template:
         src: cvmfs_modules.sh.j2
