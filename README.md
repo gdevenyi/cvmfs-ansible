@@ -118,6 +118,14 @@ or release, so misuse fails immediately rather than mid-install.
 On Arch, `cvmfs` and `autofs` have no official packages and are built from the
 AUR. The playbook creates an unprivileged `aur_builder` user (makepkg refuses
 to run as root), grants it passwordless `pacman`, and runs `makepkg` for both.
+
+That grant is held only for the build. `NOPASSWD` on an unrestricted
+`/usr/bin/pacman` is equivalent to root — `pacman -U` will install any package
+— and makepkg executes PKGBUILD code as `aur_builder`, so a hostile AUR recipe
+could use it to escalate. The playbook removes `/etc/sudoers.d/` grant as soon
+as the builds are done, and only re-creates it when a package is actually
+missing. The `aur_builder` account is kept: with no grant it is a locked
+system account with no privileges, and keeping it preserves the makepkg cache.
 The `cvmfs` build is a full cmake compile — budget 15-30 minutes. Run
 `pacman -Syu` before applying: building AUR packages against a partially
 upgraded system is the usual way this fails.

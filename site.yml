@@ -175,8 +175,15 @@
     # are built from source with makepkg. makepkg refuses to run as root, so
     # the builds go through an unprivileged user that is allowed to call
     # pacman (which makepkg --syncdeps needs for build/runtime dependencies).
+    #
+    # The whole block is gated on something actually being missing. That keeps
+    # a configured host at changed=0, and — with the revoke task below — means
+    # the pacman grant exists only while a build is genuinely in progress.
     - name: Install autofs and CVMFS from the AUR (Arch Linux)
-      when: is_arch | bool
+      when:
+        - is_arch | bool
+        - ansible_facts.packages['autofs'] is not defined
+          or ansible_facts.packages['cvmfs'] is not defined
       block:
         - name: Create the AUR build user
           ansible.builtin.user:
@@ -233,6 +240,24 @@
             use: makepkg
             state: present
           when: not ansible_check_mode
+
+    # NOPASSWD on /usr/bin/pacman is effectively root: the arguments are
+    # unrestricted, so `pacman -U <anything>` installs an arbitrary package.
+    # makepkg runs PKGBUILD code as aur_build_user, so a hostile AUR recipe
+    # could use the grant to escalate. Hold it only for the build.
+    #
+    # This sits outside the block above, and so runs on every Arch host, which
+    # also cleans up a grant left behind by an earlier version of this
+    # playbook. A build that fails aborts the play before this task; the next
+    # successful run removes the grant.
+    #
+    # The user itself is kept: once the grant is gone it is a locked system
+    # account with no privileges, and keeping it preserves the makepkg cache.
+    - name: Revoke the AUR build user's pacman privilege
+      community.general.sudoers:
+        name: "allow-{{ aur_build_user }}-pacman"
+        state: absent
+      when: is_arch | bool
 
     - name: Run cvmfs_config setup (configure autofs)
       ansible.builtin.command: cvmfs_config setup

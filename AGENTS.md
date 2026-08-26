@@ -191,6 +191,11 @@ sudo /usr/local/sbin/update-lmod-spider-cache
   before `cvmfs`: the cvmfs package's `post_install` runs `cvmfs_config setup`,
   which needs `/etc/autofs/auto.master.d` to exist. Keep `TMPDIR=/var/tmp` on
   those tasks — Arch's `/tmp` is a tmpfs the cvmfs cmake build can fill.
+- Keep the AUR block gated on a package actually being missing, and keep the
+  separate revoke task that removes the pacman grant afterwards. `NOPASSWD` on
+  an unrestricted `/usr/bin/pacman` is equivalent to root, and makepkg runs
+  PKGBUILD code as that user, so the grant must not outlive the build. The
+  gate is also what keeps a configured Arch host at `changed=0`.
 - `protobuf` in the Arch prerequisite list is a workaround, not a real
   dependency of this repo: the AUR cvmfs PKGBUILD omits it from `makedepends`
   and the build dies at `Could NOT find Protobuf`. Drop it when upstream fixes
