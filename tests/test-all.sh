@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # test-all.sh — Run the full create → apply → verify → teardown cycle for
-# every supported target, sequentially.
+# every default target, sequentially.
+#
+# Defaults to TARGETS_DEFAULT (the six apt targets). arch:rolling is
+# supported but excluded from the default sweep — see tests/lib.sh — so
+# include it explicitly when you want it.
 #
 # Usage:
 #   ./tests/test-all.sh
 #   TARGETS='ubuntu:22.04 debian:13' ./tests/test-all.sh
+#   TARGETS='ubuntu:26.04 arch:rolling' ./tests/test-all.sh  # Arch is opt-in
 #   KEEP_ON_FAILURE=1 ./tests/test-all.sh        # leave the broken VM up
 #   CONTINUE_ON_ERROR=1 ./tests/test-all.sh      # don't stop at first failure
 #   SKIP_TEARDOWN=1 ./tests/test-all.sh           # leave all VMs up
@@ -16,7 +21,7 @@ REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${SCRIPT_DIR}/lib.sh"
 
 # shellcheck disable=SC2206  # intentional word-split on whitespace-separated list
-TARGET_LIST=(${TARGETS:-${TARGETS_ALL[*]}})
+TARGET_LIST=(${TARGETS:-${TARGETS_DEFAULT[*]}})
 KEEP_ON_FAILURE="${KEEP_ON_FAILURE:-0}"
 CONTINUE_ON_ERROR="${CONTINUE_ON_ERROR:-0}"
 SKIP_TEARDOWN="${SKIP_TEARDOWN:-0}"

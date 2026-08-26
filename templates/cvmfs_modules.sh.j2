@@ -10,10 +10,11 @@
 # system tools like /usr/bin/lesspipe and breaks the default ~/.bashrc.
 #
 # The filename starts with `zz-` so /etc/profile.d sources this script
-# AFTER lmod.sh. On Ubuntu 22.04 (lmod 6.6), lmod.sh unconditionally resets
-# MODULEPATH from /etc/lmod/modulespath when MODULEPATH_ROOT is unset, which
-# wipes any earlier value. Setting MODULEPATH here, after lmod.sh has run,
-# survives intact across all supported Ubuntu releases.
+# AFTER Lmod's own init script — lmod.sh on the Debian family, modules.sh on
+# Arch; `zz-` sorts after both. On Ubuntu 22.04 (lmod 6.6), lmod.sh
+# unconditionally resets MODULEPATH from /etc/lmod/modulespath when
+# MODULEPATH_ROOT is unset, which wipes any earlier value. Setting MODULEPATH
+# here, after Lmod's init has run, survives intact on every supported target.
 
 # Guard against double-sourcing
 if [ -n "$_CVMFS_MODULES_SOURCED" ]; then

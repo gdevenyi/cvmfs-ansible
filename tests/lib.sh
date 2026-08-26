@@ -20,6 +20,16 @@ DEFAULT_VM_NAME='cvmfs-test'
 TARGETS_ALL=(
     ubuntu:22.04 ubuntu:24.04 ubuntu:26.04
     debian:11    debian:12    debian:13
+    arch:rolling
+)
+# What test-all.sh sweeps by default. arch:rolling is supported but opt-in:
+# cvmfs and autofs are AUR-only there, so the run includes a full cmake build
+# of cvmfs (~15-30min on 2 vCPU) that would dominate the sweep. Reach it with
+# TARGET=arch:rolling ./tests/test-single.sh, or TARGETS='arch:rolling'.
+# shellcheck disable=SC2034  # consumed by scripts that source this file
+TARGETS_DEFAULT=(
+    ubuntu:22.04 ubuntu:24.04 ubuntu:26.04
+    debian:11    debian:12    debian:13
 )
 # shellcheck disable=SC2034  # consumed by scripts that source this file
 DEFAULT_TARGET='ubuntu:26.04'
@@ -43,6 +53,9 @@ _os_variant_for_target() {
     case "$distro" in
         ubuntu) candidate="ubuntu${version}"; fallback='ubuntu24.04' ;;
         debian) candidate="debian${version}"; fallback='debian12'    ;;
+        # Arch is rolling: libosinfo carries a single 'archlinux' short-id
+        # rather than one per version, so candidate and fallback coincide.
+        arch)   candidate='archlinux';        fallback='archlinux'   ;;
         *)      die "Unsupported distro for --os-variant: '${distro}'" ;;
     esac
     if command -v osinfo-query >/dev/null 2>&1; then
@@ -82,6 +95,7 @@ resolve_target() {
         debian:11)    RESOLVED_VM_IP='192.168.122.31'; codename=bullseye ;;
         debian:12)    RESOLVED_VM_IP='192.168.122.32'; codename=bookworm ;;
         debian:13)    RESOLVED_VM_IP='192.168.122.33'; codename=trixie   ;;
+        arch:rolling) RESOLVED_VM_IP='192.168.122.40' ;;
         *)
             die "Unsupported target: '${target}' (supported: ${TARGETS_ALL[*]})"
             ;;
@@ -111,6 +125,15 @@ resolve_target() {
             # the `debian` user we ssh in as.
             RESOLVED_VM_IMAGE_URL="https://cloud.debian.org/images/cloud/${codename}/latest/debian-${version}-generic-amd64.qcow2"
             RESOLVED_SSH_USER='debian'
+            ;;
+        arch)
+            # `cloudimg` ships cloud-init; the `basic` variant does not.
+            # Unlike the Ubuntu and Debian URLs this one is not pinned to a
+            # release — `images/latest/` moves. Delete the cached base image
+            # (see RESOLVED_VM_BASE_IMAGE) to pick up a newer snapshot; a
+            # stale one makes the AUR builds fight a partial upgrade.
+            RESOLVED_VM_IMAGE_URL='https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2'
+            RESOLVED_SSH_USER='arch'
             ;;
     esac
 }

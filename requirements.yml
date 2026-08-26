@@ -1,3 +1,5 @@
 ---
 collections:
   - name: community.general
+  # cvmfs and autofs have no official Arch packages; both come from the AUR.
+  - name: kewlfft.aur

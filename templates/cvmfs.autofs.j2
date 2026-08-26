@@ -1,2 +1,2 @@
-# /etc/auto.master.d/cvmfs.autofs — Ansible managed
-/cvmfs /etc/auto.cvmfs --timeout={{ cvmfs_autofs_timeout }}
+# {{ cvmfs_autofs_master_entry }} — Ansible managed
+/cvmfs {{ cvmfs_auto_map }} --timeout={{ cvmfs_autofs_timeout }}
