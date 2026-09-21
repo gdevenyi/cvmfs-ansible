@@ -258,6 +258,7 @@ Important constraints:
 - keep `lmod_cache_writer_broken` as the single gate for both `LMOD_IGNORE_CACHE` and the spider cache tasks
 - keep the autofs paths behind `cvmfs_autofs_master_entry` / `cvmfs_auto_map`; Arch's autofs uses `/etc/autofs` as its sysconfdir and a hard-coded `/etc/auto.master.d` silently writes a file nothing reads
 - keep `LMOD_AVAIL_EXTENSIONS=no` exported from `cvmfs_modules.sh.j2`; Neurodesk modulefiles declare every container file as an Lmod extension and the default `yes` floods `module avail` with ~10k entries (`module spider` still finds them)
+- keep `cvmfs_modules.sh.j2` checking `/proc/mounts` (`_cvmfs_mounted`) before it touches any `/cvmfs/...` path; a path test on an unmounted repository triggers the autofs mount, whose cvmfs helper requests the config repository through the same map and deadlocks automount, so every login shell that sources the script hangs (hung all greeter, tty and ssh logins at boot on 2026-09-20)
 - keep the explicit device name in `create-vm.sh`'s network-config for Debian (`enp1s0`) and Arch (`eth0`); only Ubuntu may use the `match:` glob. Arch boots `net.ifnames=0` and renders through networkd, whose cloud-init renderer drops `match:` blocks entirely
 
 ## Testing & QA
@@ -298,6 +299,7 @@ TARGETS='ubuntu:26.04 arch:rolling' ./tests/test-all.sh
 - Neurodesk modules are visible
 - `module avail` does not print the module-extensions listing (Neurodesk
   modulefiles would otherwise flood it; `module spider` still finds extensions)
+- the profile script adds no CVMFS tree when `/proc/mounts` lists none
 - the Lmod spider cache exists, Lmod reports it, the refresh timer is
   enabled and active, and a manual refresh succeeds (skipped on Ubuntu
   22.04 / Debian 11)

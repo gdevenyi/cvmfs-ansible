@@ -247,6 +247,16 @@ explicitly with `module load <name>`. This keeps the default shell PATH and
 environment clean (sourcing Alliance's profile would otherwise prepend
 `/cvmfs/.../gentoo/.../usr/bin` and shadow system tools like `lesspipe`).
 
+The script only adds trees whose repository is already mounted (it checks
+`/proc/mounts` first). It never tests a `/cvmfs/...` path itself: on an
+unmounted repository that test triggers the autofs mount, whose cvmfs helper
+requests the config repository through the same autofs map and deadlocks
+automount, and every login shell that sources the script then hangs. Nothing
+mounts the repositories at boot, so after a reboot run `sudo cvmfs_config
+probe` once; it reads the config repository before the others, which is the
+safe order. A plain `ls /cvmfs/soft.computecanada.ca` as the first access after
+boot hits the same deadlock.
+
 ### Alliance
 
 Alliance's clean Lmod entry point is `/cvmfs/soft.computecanada.ca/custom/modules`.

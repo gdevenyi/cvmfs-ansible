@@ -61,6 +61,12 @@ run_check "Neurodesk modules visible (neurodesk.ardc.edu.au)" "module avail 2>&1
 # Neurodesk modulefiles declare every file in every container as an Lmod
 # extension; without LMOD_AVAIL_EXTENSIONS=no the listing dwarfs the modules.
 run_check "module avail hides the extensions listing" "! module avail 2>&1 | grep -q 'list of module extensions'"
+# The profile script must decide from /proc/mounts, never by testing a /cvmfs
+# path: on an unmounted repository that test triggers an autofs mount that
+# deadlocks, and every login shell then hangs. Hide /proc (and so the mount
+# table) in a private mount namespace; the script must add nothing and return.
+run_check "profile script skips CVMFS trees not in /proc/mounts" \
+    "sudo timeout -k 3 10 unshare -m sh -c 'mount -t tmpfs none /proc; MODULEPATH=; . /etc/profile.d/zz-cvmfs-modules.sh; [ -z \"\$MODULEPATH\" ]'"
 
 printf '\n%s\n' '--- Lmod Spider Cache ---'
 # Ubuntu 22.04 and Debian 11 ship Lmod 6.6, whose cache writer emits a cache

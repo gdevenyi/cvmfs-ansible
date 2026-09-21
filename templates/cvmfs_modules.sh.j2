@@ -45,6 +45,21 @@ export LMOD_IGNORE_CACHE=yes
 # Lmod 6.6 (Ubuntu 22.04 / Debian 11) predates extensions and ignores this.
 export LMOD_AVAIL_EXTENSIONS=no
 
+# Test /proc/mounts, never a /cvmfs path, before adding a tree. /cvmfs is an
+# autofs map: a path test on an unmounted repository triggers its mount, and
+# the cvmfs mount helper then requests the config repository through the same
+# map from inside that mount. automount cannot serve that while it is still
+# spawning the first mount, so both hang forever, and with them every process
+# that touches /cvmfs. Every greeter, tty and ssh login sources this script,
+# so one such test at boot hangs all logins (seen 2026-09-20). Only trees that
+# are already mounted go on MODULEPATH. `cvmfs_config probe` mounts them
+# safely: it reads the config repository before it touches the others.
+# Same match as the stale-mount check in site.yml: source cvmfs2 (optionally
+# path-prefixed, as cvmfs_config's list_mounts allows), then the mountpoint.
+_cvmfs_mounted() {
+    grep -qsE "^(/[^ ]*/)?cvmfs2 /cvmfs/$1 " /proc/mounts
+}
+
 # --- Alliance CAN (soft.computecanada.ca) ---
 # /cvmfs/soft.computecanada.ca/custom/modules is Alliance's clean Lmod entry
 # point. After it is on MODULEPATH, `module avail` shows StdEnv/2023 etc.;
@@ -54,7 +69,7 @@ export LMOD_AVAIL_EXTENSIONS=no
 # the helper Lua functions (e.g. get_highest_supported_architecture) that
 # Alliance modulefiles call. It's a config pointer only — nothing runs from
 # CVMFS until the user explicitly invokes `module`.
-if [ -d /cvmfs/soft.computecanada.ca/custom/modules ]; then
+if _cvmfs_mounted soft.computecanada.ca && [ -d /cvmfs/soft.computecanada.ca/custom/modules ]; then
     MODULEPATH="/cvmfs/soft.computecanada.ca/custom/modules${MODULEPATH:+:$MODULEPATH}"
     export LMOD_PACKAGE_PATH=/cvmfs/soft.computecanada.ca/config/lmod/
     export LMOD_RC=/cvmfs/soft.computecanada.ca/config/lmod/lmodrc.lua
@@ -67,7 +82,7 @@ fi
 # --- Neurodesk (neurodesk.ardc.edu.au) ---
 # Neurodesk publishes one modulefile tree per application under
 # neurodesk-modules/, so each subdirectory needs its own MODULEPATH entry.
-if [ -d /cvmfs/neurodesk.ardc.edu.au/neurodesk-modules ]; then
+if _cvmfs_mounted neurodesk.ardc.edu.au && [ -d /cvmfs/neurodesk.ardc.edu.au/neurodesk-modules ]; then
     for _nd_dir in /cvmfs/neurodesk.ardc.edu.au/neurodesk-modules/*/; do
         [ -d "$_nd_dir" ] || continue
         _nd_dir="${_nd_dir%/}"
@@ -76,4 +91,5 @@ if [ -d /cvmfs/neurodesk.ardc.edu.au/neurodesk-modules ]; then
     unset _nd_dir
 fi
 
+unset -f _cvmfs_mounted
 export MODULEPATH
