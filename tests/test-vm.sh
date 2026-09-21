@@ -58,6 +58,9 @@ printf '\n%s\n' '--- Module System ---'
 run_check "module command is available" "type module"
 run_check "Alliance modules visible (StdEnv/2023)" "module avail 2>&1 | grep -q 'StdEnv/2023'"
 run_check "Neurodesk modules visible (neurodesk.ardc.edu.au)" "module avail 2>&1 | grep -q neurodesk.ardc.edu.au"
+# Neurodesk modulefiles declare every file in every container as an Lmod
+# extension; without LMOD_AVAIL_EXTENSIONS=no the listing dwarfs the modules.
+run_check "module avail hides the extensions listing" "! module avail 2>&1 | grep -q 'list of module extensions'"
 
 printf '\n%s\n' '--- Lmod Spider Cache ---'
 # Ubuntu 22.04 and Debian 11 ship Lmod 6.6, whose cache writer emits a cache

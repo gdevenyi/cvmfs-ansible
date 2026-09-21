@@ -257,6 +257,7 @@ Important constraints:
 - keep the spider cache's `MODULEPATH` derived from `/etc/profile.d/zz-cvmfs-modules.sh` rather than reimplemented; a cache built over a different path set silently misreports what `module avail` shows
 - keep `lmod_cache_writer_broken` as the single gate for both `LMOD_IGNORE_CACHE` and the spider cache tasks
 - keep the autofs paths behind `cvmfs_autofs_master_entry` / `cvmfs_auto_map`; Arch's autofs uses `/etc/autofs` as its sysconfdir and a hard-coded `/etc/auto.master.d` silently writes a file nothing reads
+- keep `LMOD_AVAIL_EXTENSIONS=no` exported from `cvmfs_modules.sh.j2`; Neurodesk modulefiles declare every container file as an Lmod extension and the default `yes` floods `module avail` with ~10k entries (`module spider` still finds them)
 - keep the explicit device name in `create-vm.sh`'s network-config for Debian (`enp1s0`) and Arch (`eth0`); only Ubuntu may use the `match:` glob. Arch boots `net.ifnames=0` and renders through networkd, whose cloud-init renderer drops `match:` blocks entirely
 
 ## Testing & QA
@@ -295,6 +296,8 @@ TARGETS='ubuntu:26.04 arch:rolling' ./tests/test-all.sh
 - `module` command is available
 - Alliance modules are visible (`StdEnv/2023`)
 - Neurodesk modules are visible
+- `module avail` does not print the module-extensions listing (Neurodesk
+  modulefiles would otherwise flood it; `module spider` still finds extensions)
 - the Lmod spider cache exists, Lmod reports it, the refresh timer is
   enabled and active, and a manual refresh succeeds (skipped on Ubuntu
   22.04 / Debian 11)

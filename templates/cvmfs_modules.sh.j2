@@ -35,6 +35,16 @@ _CVMFS_MODULES_SOURCED=1
 export LMOD_IGNORE_CACHE=yes
 {% endif %}
 
+# Neurodesk modulefiles declare every file inside each container as an Lmod
+# "extension" — hundreds of entries per container version, including junk
+# like .DS_Store. With every neurodesk-modules/*/ tree on MODULEPATH, Lmod's
+# default (LMOD_AVAIL_EXTENSIONS=yes) makes `module avail` print ~10k
+# extension names after the module list. Hide them by default; `module
+# spider` still finds them, and a user can opt back in per session with
+# `export LMOD_AVAIL_EXTENSIONS=yes` (or per call with --terse_show_extensions).
+# Lmod 6.6 (Ubuntu 22.04 / Debian 11) predates extensions and ignores this.
+export LMOD_AVAIL_EXTENSIONS=no
+
 # --- Alliance CAN (soft.computecanada.ca) ---
 # /cvmfs/soft.computecanada.ca/custom/modules is Alliance's clean Lmod entry
 # point. After it is on MODULEPATH, `module avail` shows StdEnv/2023 etc.;
