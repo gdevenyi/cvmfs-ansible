@@ -320,8 +320,15 @@
       loop: "{{ _cvmfs_stale_mounts.stdout_lines | default([]) }}"
       when: not ansible_check_mode
 
+    # Through `cvmfs_config probe`, never a bare `ls`: probe parses the
+    # repository's configuration first, which mounts the config repository
+    # before the repository itself. A bare `ls` on an unmounted repository
+    # makes its mount helper request the config repository through autofs
+    # from inside the mount, which automount cannot serve (see
+    # templates/cvmfs-probe.service.j2): both hang, and every later /cvmfs
+    # access with them.
     - name: Remount repaired CVMFS mounts through autofs
-      ansible.builtin.command: ls {{ item }}
+      ansible.builtin.command: cvmfs_config probe {{ item | basename }}
       changed_when: false
       loop: "{{ _cvmfs_stale_mounts.stdout_lines | default([]) }}"
       when: not ansible_check_mode
@@ -549,6 +556,29 @@
     # ---------------------------------------------------------------
     - name: Flush handlers (reload autofs if needed)
       ansible.builtin.meta: flush_handlers
+      when: not ansible_check_mode
+
+    # A bare `ls /cvmfs/<repo>` as the first access after boot deadlocks
+    # autofs (see templates/cvmfs-probe.service.j2). This timer makes
+    # `cvmfs_config probe` that first access, one minute after boot and
+    # hourly from then on.
+    - name: Deploy the CVMFS probe units
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - cvmfs-probe.service
+        - cvmfs-probe.timer
+
+    - name: Enable the CVMFS probe timer
+      ansible.builtin.systemd:
+        name: cvmfs-probe.timer
+        daemon_reload: true
+        enabled: true
+        state: started
       when: not ansible_check_mode
 
     - name: Verify CVMFS configuration (chksetup)

@@ -1,0 +1,22 @@
+# /etc/systemd/system/cvmfs-probe.service — Ansible managed
+[Unit]
+Description=Mount the CVMFS repositories in a safe order
+Documentation=https://cvmfs.readthedocs.io/en/stable/cpt-configure.html
+# `cvmfs_config probe` parses each repository's configuration before it
+# touches the repository, and that parse mounts the config repository
+# (cvmfs-config.cern.ch) first. Any other first access to /cvmfs, such as a
+# bare `ls /cvmfs/<repo>`, makes the repository's cvmfs mount helper request
+# the config repository through autofs from inside its own mount. automount
+# serialises mount(8) spawns, so it cannot serve that nested request: both
+# mounts hang forever, and with them every process that touches /cvmfs.
+# This unit therefore has to be the first thing to touch /cvmfs after boot;
+# the profile script and the spider cache refresh only use repositories that
+# are already mounted.
+Wants=network-online.target
+After=network-online.target autofs.service
+
+[Service]
+Type=oneshot
+# `-`: a probe fails whenever the network is down. The timer retries hourly,
+# so that is not a failure of the unit; the probe output is still in the log.
+ExecStart=-/usr/bin/cvmfs_config probe

@@ -1,0 +1,15 @@
+# /etc/systemd/system/cvmfs-probe.timer — Ansible managed
+[Unit]
+Description=Mount the CVMFS repositories at boot and re-probe them hourly
+
+[Timer]
+# Soon after boot: nothing else may be the first to touch /cvmfs.
+OnBootSec=1min
+# Hourly: re-mount after a boot without network, and keep the config
+# repository in use so autofs does not expire it. An expired config
+# repository turns the next repository mount into the nested request that
+# cvmfs-probe.service describes.
+OnUnitActiveSec=1h
+
+[Install]
+WantedBy=timers.target

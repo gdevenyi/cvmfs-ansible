@@ -62,6 +62,7 @@ This is infrastructure-as-code, not an application repo. There is no `src/`, ser
 - `/etc/cvmfs/default.local`
 - `/etc/cvmfs/config.d/neurodesk.ardc.edu.au.conf`
 - `/etc/cvmfs/keys/ardc.edu.au/neurodesk.ardc.edu.au.pub`
+- `/etc/systemd/system/cvmfs-probe.{service,timer}` (`cvmfs_config probe` one minute after boot and hourly: the first access to `/cvmfs`, in the safe order)
 - `/usr/share/module.sh`
 - `/etc/profile.d/zz-cvmfs-modules.sh` (named so it sorts after Lmod's own
   profile script: `lmod.sh` on the Debian family, `modules.sh` on Arch)
@@ -222,6 +223,7 @@ sudo /usr/local/sbin/update-lmod-spider-cache
 - `templates/default.local.j2` — main CVMFS client settings
 - `templates/neurodesk.conf.j2` — Neurodesk repo configuration
 - `templates/neurodesk.key.j2` — Neurodesk public key
+- `templates/cvmfs-probe.service.j2` / `templates/cvmfs-probe.timer.j2` — `cvmfs_config probe` one minute after boot and hourly, so the config repository is mounted before any other repository (the unit comment explains the autofs deadlock this avoids)
 - `templates/module.sh.j2` — shell-specific Lmod dispatcher
 - `templates/cvmfs_modules.sh.j2` — profile script that wires Alliance + Neurodesk into shell sessions (deployed as `/etc/profile.d/zz-cvmfs-modules.sh` so it sorts after Lmod's own profile script — `lmod.sh` on the Debian family, `modules.sh` on Arch)
 - `templates/lmodrc.lua.j2` — points Lmod at the system spider cache
@@ -259,6 +261,7 @@ Important constraints:
 - keep the autofs paths behind `cvmfs_autofs_master_entry` / `cvmfs_auto_map`; Arch's autofs uses `/etc/autofs` as its sysconfdir and a hard-coded `/etc/auto.master.d` silently writes a file nothing reads
 - keep `LMOD_AVAIL_EXTENSIONS=no` exported from `cvmfs_modules.sh.j2`; Neurodesk modulefiles declare every container file as an Lmod extension and the default `yes` floods `module avail` with ~10k entries (`module spider` still finds them)
 - keep `cvmfs_modules.sh.j2` checking `/proc/mounts` (`_cvmfs_mounted`) before it touches any `/cvmfs/...` path; a path test on an unmounted repository triggers the autofs mount, whose cvmfs helper requests the config repository through the same map and deadlocks automount, so every login shell that sources the script hangs (hung all greeter, tty and ssh logins at boot on 2026-09-20)
+- never make a bare `ls /cvmfs/<repo>` (or any path test) the first access to a repository, in tasks, scripts or tests; go through `cvmfs_config probe`, which mounts the config repository first, and keep `cvmfs-probe.timer` as the first thing to touch `/cvmfs` after boot
 - keep the explicit device name in `create-vm.sh`'s network-config for Debian (`enp1s0`) and Arch (`eth0`); only Ubuntu may use the `match:` glob. Arch boots `net.ifnames=0` and renders through networkd, whose cloud-init renderer drops `match:` blocks entirely
 
 ## Testing & QA
@@ -300,6 +303,7 @@ TARGETS='ubuntu:26.04 arch:rolling' ./tests/test-all.sh
 - `module avail` does not print the module-extensions listing (Neurodesk
   modulefiles would otherwise flood it; `module spider` still finds extensions)
 - the profile script adds no CVMFS tree when `/proc/mounts` lists none
+- the CVMFS probe timer is enabled and active
 - the Lmod spider cache exists, Lmod reports it, the refresh timer is
   enabled and active, and a manual refresh succeeds (skipped on Ubuntu
   22.04 / Debian 11)

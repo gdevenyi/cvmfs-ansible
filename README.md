@@ -46,6 +46,7 @@ Key target files created or managed:
 - `/etc/cvmfs/default.local`
 - `/etc/cvmfs/config.d/neurodesk.ardc.edu.au.conf`
 - `/etc/cvmfs/keys/ardc.edu.au/neurodesk.ardc.edu.au.pub`
+- `/etc/systemd/system/cvmfs-probe.{service,timer}` (first access to `/cvmfs` after boot, then hourly)
 - `/usr/share/module.sh`
 - `/etc/profile.d/zz-cvmfs-modules.sh` (named to sort after `lmod.sh`)
 - `/etc/bash.bashrc` (managed block)
@@ -68,6 +69,8 @@ Key target files created or managed:
 │   ├── default.local.j2
 │   ├── neurodesk.conf.j2
 │   ├── neurodesk.key.j2
+│   ├── cvmfs-probe.service.j2
+│   ├── cvmfs-probe.timer.j2
 │   ├── module.sh.j2
 │   ├── cvmfs_modules.sh.j2
 │   ├── lmodrc.lua.j2
@@ -251,11 +254,13 @@ The script only adds trees whose repository is already mounted (it checks
 `/proc/mounts` first). It never tests a `/cvmfs/...` path itself: on an
 unmounted repository that test triggers the autofs mount, whose cvmfs helper
 requests the config repository through the same autofs map and deadlocks
-automount, and every login shell that sources the script then hangs. Nothing
-mounts the repositories at boot, so after a reboot run `sudo cvmfs_config
-probe` once; it reads the config repository before the others, which is the
-safe order. A plain `ls /cvmfs/soft.computecanada.ca` as the first access after
-boot hits the same deadlock.
+automount, and every login shell that sources the script then hangs.
+`cvmfs-probe.timer` runs `cvmfs_config probe` one minute after boot and hourly
+from then on. Probe parses each repository's configuration first, which mounts
+the config repository before the others: the safe order. It also keeps the
+config repository in use so autofs does not expire it. Never make a bare
+`ls /cvmfs/<repo>` the first access to a repository; if the timer has not run
+yet, run `sudo cvmfs_config probe`.
 
 ### Alliance
 
@@ -385,6 +390,7 @@ Expected outcomes:
 - `module avail` shows Alliance modules (for example `StdEnv/2023`) and Neurodesk modules
 - `module --config` lists `/var/cache/lmod` as a cache directory, and
   `lmod-spider-cache.timer` is active (except on Ubuntu 22.04 / Debian 11)
+- `cvmfs-probe.timer` is enabled and active
 
 ## Local End-to-End Testing with Libvirt
 

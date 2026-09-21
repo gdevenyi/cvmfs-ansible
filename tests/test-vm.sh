@@ -105,6 +105,8 @@ autofs_conf_dir="$(ssh_host_bash "$HOST" \
 run_check "${autofs_conf_dir}/auto.master.d/cvmfs.autofs exists" \
     "test -f ${autofs_conf_dir}/auto.master.d/cvmfs.autofs"
 run_check "autofs is running" "systemctl is-active --quiet autofs"
+run_check "CVMFS probe timer is enabled" "systemctl is-enabled --quiet cvmfs-probe.timer"
+run_check "CVMFS probe timer is active" "systemctl is-active --quiet cvmfs-probe.timer"
 if [[ "$os_id" != "ubuntu:22.04" && "$os_id" != "debian:11" ]]; then
     run_check "/usr/local/sbin/update-lmod-spider-cache exists" "test -x /usr/local/sbin/update-lmod-spider-cache"
     run_check "/etc/lmod/lmodrc.lua exists" "test -f /etc/lmod/lmodrc.lua"
