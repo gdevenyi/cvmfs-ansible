@@ -3,11 +3,14 @@
 cvmfs_repositories:
   - soft.computecanada.ca
   - neurodesk.ardc.edu.au
+  - software.eessi.io
 
 # CVMFS client settings
 cvmfs_http_proxy: "DIRECT"
 cvmfs_client_profile: "single"
-cvmfs_quota_limit: 5000  # cache size in MB
+cvmfs_quota_limit: 10000  # cache size in MB, shared by all repositories
+# 10000 is what EESSI documents for its own repository; the three trees
+# configured here share one cache, so the largest recommendation wins.
 # autofs idle-unmount timeout for /cvmfs, in seconds (the default 5m is too
 # short for slow CVMFS remounts). Set to 0 to keep repositories mounted until
 # reboot instead of auto-unmounting on idle.
@@ -26,9 +29,28 @@ neurodesk_server_url: >-
   http://s1bnl-cvmfs.openhtc.io/cvmfs/@fqrn@;
   http://s1perth-cvmfs.openhtc.io/cvmfs/@fqrn@
 
+# EESSI-specific settings
+# Mirrors the eessi.io domain config that upstream ships in the
+# cvmfs-config-eessi package (and the cvmfs-config-eessi AUR package), so no
+# extra distro package is needed on any target.
+# https://github.com/EESSI/filesystem-layer
+eessi_use_geoapi: true
+# Two Stratum-1 sets, picked by templates/eessi.conf.j2 the way upstream does:
+# the CDN when the client talks to a Stratum 1 directly, the plain servers
+# when a site proxy is configured (a local Squid in front of a CDN buys
+# nothing and the CDN's rotating addresses confuse it).
+eessi_server_url_cdn: >-
+  http://s1eessieu1-cvmfs.openhtc.io/cvmfs/@fqrn@;
+  http://s1eessina1-cvmfs.openhtc.io/cvmfs/@fqrn@;
+  http://s1ral-cvmfs.openhtc.io/cvmfs/@fqrn@
+eessi_server_url_direct: >-
+  http://aws-eu-central-s1.eessi.science/cvmfs/@fqrn@;
+  http://azure-us-east-s1.eessi.science/cvmfs/@fqrn@;
+  http://ral-uk-s1.eessi.science:8000/cvmfs/@fqrn@
+
 # Lmod spider cache
 # A system-wide spider cache lets `module spider` read a prebuilt index
-# instead of walking both CVMFS module trees (~21s cold, ~1.3s cached), and
+# instead of walking the CVMFS module trees (~21s cold, ~1.3s cached), and
 # stops each user from building a private 9MB copy under ~/.cache/lmod.
 # Skipped automatically on the Lmod 6.6 targets (Ubuntu 22.04, Debian 11),
 # whose cache writer emits a broken cache — see templates/cvmfs_modules.sh.j2.

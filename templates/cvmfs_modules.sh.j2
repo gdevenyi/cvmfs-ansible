@@ -91,5 +91,25 @@ if _cvmfs_mounted neurodesk.ardc.edu.au && [ -d /cvmfs/neurodesk.ardc.edu.au/neu
     unset _nd_dir
 fi
 
+{% if not (lmod_too_old_for_eessi | bool) %}
+# --- EESSI (software.eessi.io) ---
+# /cvmfs/software.eessi.io/init/modules is EESSI's documented entry point for
+# a site that already runs Lmod 8.6+: it holds only the EESSI/<version>
+# modulefiles, so `module avail` gains a handful of entries rather than the
+# whole EESSI stack. `module load EESSI/<version>` is what pulls the stack in
+# — it detects the CPU target and puts that architecture's tree on
+# MODULEPATH.
+#
+# Do NOT source versions/<version>/init/lmod/bash (or init/bash) here. That
+# script replaces the system Lmod with the one EESSI ships, wipes MODULEPATH
+# and auto-loads the EESSI module — in a login script it would hand every
+# user EESSI's software stack whether they asked for it or not, and hide the
+# Alliance and Neurodesk trees. Same reason Alliance's bash.sh is not sourced
+# above: MODULEPATH only, the user opts in with `module load`.
+if _cvmfs_mounted software.eessi.io && [ -d /cvmfs/software.eessi.io/init/modules ]; then
+    MODULEPATH="/cvmfs/software.eessi.io/init/modules${MODULEPATH:+:$MODULEPATH}"
+fi
+
+{% endif %}
 unset -f _cvmfs_mounted
 export MODULEPATH

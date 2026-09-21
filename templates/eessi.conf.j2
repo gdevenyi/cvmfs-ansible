@@ -1,0 +1,29 @@
+# /etc/cvmfs/domain.d/eessi.io.conf — Ansible managed
+#
+# The eessi.io domain config upstream ships in cvmfs-config-eessi, kept here
+# so no target needs that package (it exists as a .deb/.rpm on GitHub and as
+# the cvmfs-config-eessi AUR package, but not in any distro repo we use).
+# Domain, not config.d: it covers every *.eessi.io repository, which is how
+# upstream scopes it.
+# https://github.com/EESSI/filesystem-layer
+CVMFS_KEYS_DIR="/etc/cvmfs/keys/eessi.io"
+
+CVMFS_USE_GEOAPI={{ 'yes' if eessi_use_geoapi else 'no' }}
+
+# CVMFS reads default.local before this file, so CVMFS_CLIENT_PROFILE and
+# CVMFS_HTTP_PROXY are already set from default.local.j2 here.
+if [ "$CVMFS_CLIENT_PROFILE" = "single" ] && [ -z "$CVMFS_HTTP_PROXY" ]; then
+    CVMFS_HTTP_PROXY="DIRECT"
+fi
+
+# Stratum 1 servers for the eessi.io domain: the CDN for clients that reach a
+# Stratum 1 directly, the plain servers behind a site proxy.
+if [ -z "$CVMFS_USE_CDN" ] && { [ "$CVMFS_HTTP_PROXY" = "DIRECT" ] || [ "$CVMFS_HTTP_PROXY" = "auto;DIRECT" ]; }; then
+    CVMFS_USE_CDN="yes"
+fi
+
+if [ "$CVMFS_USE_CDN" = "yes" ]; then
+    CVMFS_SERVER_URL="{{ eessi_server_url_cdn | replace('\n', '') | replace(' ', '') }}"
+else
+    CVMFS_SERVER_URL="{{ eessi_server_url_direct | replace('\n', '') | replace(' ', '') }}"
+fi

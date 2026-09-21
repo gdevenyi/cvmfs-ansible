@@ -49,15 +49,32 @@ printf '%s\n' '--- CVMFS Configuration ---'
 run_check "cvmfs_config chksetup succeeds" "sudo cvmfs_config chksetup"
 run_check "cvmfs_config probe soft.computecanada.ca" "sudo cvmfs_config probe soft.computecanada.ca"
 run_check "cvmfs_config probe neurodesk.ardc.edu.au" "sudo cvmfs_config probe neurodesk.ardc.edu.au"
+run_check "cvmfs_config probe software.eessi.io" "sudo cvmfs_config probe software.eessi.io"
 
 printf '\n%s\n' '--- CVMFS Mount Points ---'
 run_check "/cvmfs/soft.computecanada.ca is accessible" "ls /cvmfs/soft.computecanada.ca"
 run_check "/cvmfs/neurodesk.ardc.edu.au is accessible" "ls /cvmfs/neurodesk.ardc.edu.au"
+run_check "/cvmfs/software.eessi.io is accessible" "ls /cvmfs/software.eessi.io"
+
+# shellcheck disable=SC2016  # $ID/$VERSION_ID must expand on the target, not here
+os_id="$(ssh_host_bash "$HOST" '. /etc/os-release; printf "%s:%s" "$ID" "$VERSION_ID"' 2>/dev/null || true)"
 
 printf '\n%s\n' '--- Module System ---'
 run_check "module command is available" "type module"
 run_check "Alliance modules visible (StdEnv/2023)" "module avail 2>&1 | grep -q 'StdEnv/2023'"
 run_check "Neurodesk modules visible (neurodesk.ardc.edu.au)" "module avail 2>&1 | grep -q neurodesk.ardc.edu.au"
+# EESSI's modulefile needs Lmod >= 8.6, so the playbook leaves its tree off
+# MODULEPATH on the Lmod 6.6 targets. Users there init EESSI's own Lmod
+# instead: source /cvmfs/software.eessi.io/versions/<version>/init/lmod/bash
+case "$os_id" in
+    ubuntu:22.04 | debian:11)
+        printf '  %-60s %bSKIP%b\n' "EESSI modules (needs Lmod 8.6, ${os_id} has 6.6)" "$YELLOW" "$NC"
+        run_check "EESSI tree is kept off MODULEPATH" "! module avail 2>&1 | grep -q 'software.eessi.io'"
+        ;;
+    *)
+        run_check "EESSI modules visible (EESSI/)" "module avail 2>&1 | grep -q 'EESSI/'"
+        ;;
+esac
 # Neurodesk modulefiles declare every file in every container as an Lmod
 # extension; without LMOD_AVAIL_EXTENSIONS=no the listing dwarfs the modules.
 run_check "module avail hides the extensions listing" "! module avail 2>&1 | grep -q 'list of module extensions'"
@@ -71,8 +88,6 @@ run_check "profile script skips CVMFS trees not in /proc/mounts" \
 printf '\n%s\n' '--- Lmod Spider Cache ---'
 # Ubuntu 22.04 and Debian 11 ship Lmod 6.6, whose cache writer emits a cache
 # Lmod cannot read back; the playbook deliberately builds none there.
-# shellcheck disable=SC2016  # $ID/$VERSION_ID must expand on the target, not here
-os_id="$(ssh_host_bash "$HOST" '. /etc/os-release; printf "%s:%s" "$ID" "$VERSION_ID"' 2>/dev/null || true)"
 case "$os_id" in
     ubuntu:22.04 | debian:11)
         printf '  %-60s %bSKIP%b\n' "spider cache (Lmod 6.6 on ${os_id})" "$YELLOW" "$NC"
@@ -94,6 +109,8 @@ printf '\n%s\n' '--- Configuration Files ---'
 run_check "/etc/cvmfs/default.local exists" "test -f /etc/cvmfs/default.local"
 run_check "Neurodesk config.d exists" "test -f /etc/cvmfs/config.d/neurodesk.ardc.edu.au.conf"
 run_check "Neurodesk public key exists" "test -f /etc/cvmfs/keys/ardc.edu.au/neurodesk.ardc.edu.au.pub"
+run_check "EESSI domain.d config exists" "test -f /etc/cvmfs/domain.d/eessi.io.conf"
+run_check "EESSI public key exists" "test -f /etc/cvmfs/keys/eessi.io/eessi.io.pub"
 run_check "/etc/profile.d/zz-cvmfs-modules.sh exists" "test -f /etc/profile.d/zz-cvmfs-modules.sh"
 run_check "/usr/share/module.sh exists" "test -f /usr/share/module.sh"
 # Arch's autofs is built --sysconfdir=/etc/autofs, so the master-map drop-in

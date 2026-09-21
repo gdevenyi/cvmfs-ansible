@@ -5,7 +5,8 @@ An Ansible-based repository for provisioning Ubuntu, Debian or Arch Linux hosts 
 - the CVMFS client
 - the Alliance software repository: `soft.computecanada.ca`
 - the Neurodesk repository: `neurodesk.ardc.edu.au`
-- Lmod integration so both repositories are available through `module`
+- the EESSI repository: `software.eessi.io`
+- Lmod integration so all three repositories are available through `module`
 
 Supported targets: **Ubuntu 22.04 / 24.04 / 26.04**, **Debian 11 / 12 / 13**
 and **Arch Linux** (any derivative Ansible reports in the `Archlinux` family,
@@ -29,15 +30,16 @@ On a supported host, the playbook:
 3. configures CVMFS to use:
    - `soft.computecanada.ca`
    - `neurodesk.ardc.edu.au`
+   - `software.eessi.io`
 4. installs Lmod
 5. installs Apptainer (required by Neurodesk container workflows) — from the upstream PPA on Ubuntu, from the upstream GitHub release `.deb` on Debian (Launchpad PPAs don't serve Debian), and from `[extra]` on Arch
-6. deploys shell integration so login shells can see both module trees
+6. deploys shell integration so login shells can see all three module trees
 7. verifies:
    - `cvmfs_config chksetup`
-   - `cvmfs_config probe` for both repositories
-   - both `/cvmfs/...` mount points are readable
+   - `cvmfs_config probe` for every repository
+   - every `/cvmfs/...` mount point is readable
    - `apptainer --version` succeeds
-8. builds a system-wide Lmod spider cache over both module trees and installs
+8. builds a system-wide Lmod spider cache over the module trees and installs
    an hourly systemd timer that refreshes it (see
    [Spider cache](#spider-cache))
 
@@ -46,6 +48,8 @@ Key target files created or managed:
 - `/etc/cvmfs/default.local`
 - `/etc/cvmfs/config.d/neurodesk.ardc.edu.au.conf`
 - `/etc/cvmfs/keys/ardc.edu.au/neurodesk.ardc.edu.au.pub`
+- `/etc/cvmfs/domain.d/eessi.io.conf`
+- `/etc/cvmfs/keys/eessi.io/eessi.io.pub`
 - `/etc/systemd/system/cvmfs-probe.{service,timer}` (first access to `/cvmfs` after boot, then hourly)
 - `/usr/share/module.sh`
 - `/etc/profile.d/zz-cvmfs-modules.sh` (named to sort after `lmod.sh`)
@@ -176,15 +180,19 @@ Primary configuration lives in `group_vars/all.yml`.
 cvmfs_repositories:
   - soft.computecanada.ca
   - neurodesk.ardc.edu.au
+  - software.eessi.io
 ```
 
 ### Main tunables
 
 - `cvmfs_http_proxy` — defaults to `DIRECT`
 - `cvmfs_client_profile` — defaults to `single`
-- `cvmfs_quota_limit` — cache size in MB, defaults to `5000`
+- `cvmfs_quota_limit` — cache size in MB, shared by all repositories, defaults to `10000` (what EESSI documents for its repository alone)
 - `neurodesk_use_geoapi` — enable Neurodesk geoproximity selection
 - `neurodesk_server_url` — semicolon-separated Neurodesk mirror chain
+- `eessi_use_geoapi` — enable EESSI geoproximity selection
+- `eessi_server_url_cdn` — EESSI Stratum 1 chain used without a site proxy
+- `eessi_server_url_direct` — EESSI Stratum 1 chain used behind a site proxy
 - `lmod_spider_cache_enabled` — build and refresh the Lmod spider cache, defaults to `true`
 - `lmod_spider_cache_dir` — where the cache lives, defaults to `/var/cache/lmod`
 - `lmod_spider_cache_timestamp` — cache timestamp file, defaults to `/var/cache/lmod/system.txt`
@@ -200,8 +208,9 @@ Example excerpt:
 ```yaml
 cvmfs_http_proxy: "DIRECT"
 cvmfs_client_profile: "single"
-cvmfs_quota_limit: 5000
+cvmfs_quota_limit: 10000
 neurodesk_use_geoapi: true
+eessi_use_geoapi: true
 ```
 
 ## Usage
@@ -244,7 +253,7 @@ ansible-playbook site.yml
 
 ## How Module Integration Works
 
-The repository exposes both Alliance and Neurodesk module trees through
+The repository exposes the Alliance, Neurodesk and EESSI module trees through
 `MODULEPATH` but **does not activate anything at login**. The user opts in
 explicitly with `module load <name>`. This keeps the default shell PATH and
 environment clean (sourcing Alliance's profile would otherwise prepend
@@ -294,10 +303,55 @@ for _nd_dir in /cvmfs/neurodesk.ardc.edu.au/neurodesk-modules/*/; do
 done
 ```
 
+### EESSI
+
+`/cvmfs/software.eessi.io/init/modules` is the entry point EESSI documents for
+a site that already runs Lmod 8.6 or newer. It holds only the
+`EESSI/<version>` modulefiles, so `module avail` gains a handful of entries
+rather than the whole EESSI stack:
+
+```bash
+MODULEPATH="/cvmfs/software.eessi.io/init/modules${MODULEPATH:+:$MODULEPATH}"
+```
+
+Loading the module is what brings the stack in — it detects the host CPU
+target and puts that architecture's tree on `MODULEPATH`:
+
+```bash
+module load EESSI/2025.06
+```
+
+Name the version. EESSI's own `.modulerc.lua` in that tree still marks
+`EESSI/2023.06` as the default, so a bare `module load EESSI` gets the oldest
+version on offer rather than the newest.
+
+EESSI is not designed to mix with another software stack. The module prepends
+EESSI's compat layer to `PATH` and repoints `LMOD_PACKAGE_PATH` / `LMOD_RC` at
+EESSI's own, so Alliance modules may not load while it is loaded.
+`module unload EESSI/2025.06` reverts all of it. EESSI's own advice for a site
+that already runs Lmod is to `module unuse $MODULEPATH` first.
+
+`/etc/profile.d/zz-cvmfs-modules.sh` never sources
+`/cvmfs/software.eessi.io/versions/<version>/init/lmod/bash` (or `init/bash`).
+That script does the same reset unconditionally and auto-loads the `EESSI`
+module, which in a login script would hand every user the EESSI stack whether
+they asked for it or not — the same reason Alliance's `bash.sh` is not sourced
+either.
+
+**Ubuntu 22.04 and Debian 11 are excluded.** EESSI's modulefile calls
+`source_sh()` and `convertToCanonical()` and refuses to load below Lmod 8.6;
+those two releases ship Lmod 6.6. The repository is still mounted and usable
+there, through the Lmod that EESSI bundles:
+
+```bash
+unset MODULEPATH
+source /cvmfs/software.eessi.io/versions/2025.06/init/lmod/bash
+```
+
 ### Spider cache
 
-`module spider` walks both module trees in full — Alliance's core tree plus
-all 32 Neurodesk category directories — on every invocation, and Lmod papers
+`module spider` walks every module tree in full — Alliance's core tree, all
+32 Neurodesk category directories, and EESSI's init tree — on every invocation, and Lmod papers
 over the cost by writing a private copy of the index into each user's
 `~/.cache/lmod`. Measured on a test VM (Ubuntu 26.04, ~1370 modulefiles):
 
@@ -353,7 +407,7 @@ removes one if a target is downgraded into that state.
 ### Shell startup
 
 - `/usr/share/module.sh` dispatches to the installed Lmod init script
-- `/etc/profile.d/zz-cvmfs-modules.sh` wires Alliance + Neurodesk into `MODULEPATH`
+- `/etc/profile.d/zz-cvmfs-modules.sh` wires Alliance + Neurodesk + EESSI into `MODULEPATH`
   (the `zz-` prefix forces it to sort after Lmod's own profile script —
   `lmod.sh` on the Debian family, `modules.sh` on Arch — because on Ubuntu
   22.04 that script resets `MODULEPATH` from `/etc/lmod/modulespath` and
@@ -368,8 +422,10 @@ Useful target-side commands:
 cvmfs_config chksetup
 cvmfs_config probe soft.computecanada.ca
 cvmfs_config probe neurodesk.ardc.edu.au
+cvmfs_config probe software.eessi.io
 ls /cvmfs/soft.computecanada.ca
 ls /cvmfs/neurodesk.ardc.edu.au
+ls /cvmfs/software.eessi.io
 apptainer --version
 bash -lc 'module avail'
 bash -lc 'module --config' | grep -A2 'Cache Directory'
@@ -385,9 +441,10 @@ ls -l /etc/autofs/auto.master.d/cvmfs.autofs   # Arch
 Expected outcomes:
 
 - `chksetup` succeeds
-- both `probe` commands succeed
-- both mount points list contents
-- `module avail` shows Alliance modules (for example `StdEnv/2023`) and Neurodesk modules
+- every `probe` command succeeds
+- every mount point lists contents
+- `module avail` shows Alliance modules (for example `StdEnv/2023`), Neurodesk
+  modules, and — except on Ubuntu 22.04 / Debian 11 — `EESSI/<version>`
 - `module --config` lists `/var/cache/lmod` as a cache directory, and
   `lmod-spider-cache.timer` is active (except on Ubuntu 22.04 / Debian 11)
 - `cvmfs-probe.timer` is enabled and active
@@ -532,11 +589,13 @@ matching `VM_NAME` unless you pass `SSH_KEY_FILE` explicitly.
 The verifier checks:
 
 - `cvmfs_config chksetup`
-- repository probes for both CVMFS repos
-- both `/cvmfs/...` mount points
+- repository probes for every CVMFS repo
+- every `/cvmfs/...` mount point
 - `module` availability
 - Alliance visibility via `StdEnv/2023`
 - Neurodesk visibility via `neurodesk.ardc.edu.au`
+- EESSI visibility via `EESSI/` (on Ubuntu 22.04 / Debian 11 it checks the
+  opposite: that the tree is kept off `MODULEPATH`)
 - presence of the expected config files
 
 ### Tear down the VM

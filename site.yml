@@ -44,6 +44,13 @@
           and ansible_facts["distribution_version"] == '22.04')
          or (ansible_facts["distribution"] == 'Debian'
              and ansible_facts["distribution_major_version"] == '11') }}
+    # Same two releases, a second defect: EESSI's modulefile calls source_sh()
+    # and convertToCanonical(), and refuses to load below Lmod 8.6 — where
+    # evaluating it would also break `module avail`. EESSI's module tree stays
+    # off MODULEPATH there; the repository still mounts, and those users
+    # initialise it with EESSI's own bundled Lmod:
+    #   source /cvmfs/software.eessi.io/versions/<version>/init/lmod/bash
+    lmod_too_old_for_eessi: "{{ lmod_cache_writer_broken }}"
     # Apptainer GitHub release pin (used on Debian; Ubuntu uses the PPA).
     # The `-trixie+` variant pins against Debian-13-or-newer libc/libfuse.
     apptainer_version: "1.5.0"
@@ -386,6 +393,44 @@
       ansible.builtin.template:
         src: neurodesk.conf.j2
         dest: /etc/cvmfs/config.d/neurodesk.ardc.edu.au.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload autofs
+
+    # EESSI ships its client config as a distro package (cvmfs-config-eessi)
+    # that is in no repository we use — a GitHub .deb on the Debian family, an
+    # AUR build on Arch. Both only drop these two files, so template them
+    # instead and keep every target on one code path.
+    - name: Create EESSI key directory
+      ansible.builtin.file:
+        path: /etc/cvmfs/keys/eessi.io
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Deploy EESSI public key
+      ansible.builtin.template:
+        src: eessi.key.j2
+        dest: /etc/cvmfs/keys/eessi.io/eessi.io.pub
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload autofs
+
+    - name: Create domain.d directory
+      ansible.builtin.file:
+        path: /etc/cvmfs/domain.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Deploy EESSI domain config
+      ansible.builtin.template:
+        src: eessi.conf.j2
+        dest: /etc/cvmfs/domain.d/eessi.io.conf
         owner: root
         group: root
         mode: "0644"
